@@ -8,6 +8,7 @@ import {
   hasFly, getWallBlockTileAt, getWallBlockTop, getWallBlockBottom,
   sizeRank,
   safeUpdate, safeDelete, safeCreateEmbedded, safeToggleStatusEffect,
+  replayUndo,
 } from './helpers.js';
 
 const parseType = (raw) => {
@@ -17,6 +18,9 @@ const parseType = (raw) => {
   if (t === 'slide') return 'Slide';
   return null;
 };
+
+const embeddedUuid = (parent, type, doc) =>
+  doc?.uuid ?? `${parent.uuid}.${type}.${doc?._id ?? doc?.id}`;
 
 const chooseFreeSquare = (targetToken) => new Promise((resolve) => {
   const GRID = getGRID();
@@ -130,19 +134,15 @@ const breakTileFromTop = async (tile, fallDmg, undoOps, collisionMsgs, targetTok
     await safeUpdate(tile.document, { 'texture.src': MATERIAL_ICONS.broken, alpha: 0.8 });
     if (game.user.isGM) await addTags(tile, ['broken']);
 
-    undoOps.push(async () => {
-      const restrict = WALL_RESTRICTIONS[mat] ?? WALL_RESTRICTIONS.stone;
-      for (const w of walls) {
-        await safeUpdate(w, restrict);
-        if (game.user.isGM) await removeTags(w, ['broken']);
-        await safeUpdate(w, { 'flags.wall-height.top': tileTop, 'flags.wall-height.bottom': tileBottom });
-      }
-      await safeUpdate(tile.document, { 'texture.src': MATERIAL_ICONS[mat] ?? MATERIAL_ICONS.stone, alpha: MATERIAL_ALPHA[mat] ?? 0.8 });
-      if (game.user.isGM) {
-        await removeTags(tile, ['broken']);
-        if (prevDamagedTag) await addTags(tile, [prevDamagedTag]);
-      }
-    });
+    const restrict = WALL_RESTRICTIONS[mat] ?? WALL_RESTRICTIONS.stone;
+    for (const w of walls) {
+      undoOps.push({ op: 'update', uuid: w.uuid, data: { ...restrict, 'flags.wall-height.top': tileTop, 'flags.wall-height.bottom': tileBottom } });
+      undoOps.push({ op: 'removeTags', uuid: w.uuid, tags: ['broken'] });
+    }
+    undoOps.push({ op: 'update', uuid: tile.document.uuid, data: { 'texture.src': MATERIAL_ICONS[mat] ?? MATERIAL_ICONS.stone, alpha: MATERIAL_ALPHA[mat] ?? 0.8 } });
+    undoOps.push({ op: 'removeTags', uuid: tile.document.uuid, tags: ['broken'] });
+    if (prevDamagedTag) undoOps.push({ op: 'addTags', uuid: tile.document.uuid, tags: [prevDamagedTag] });
+
     collisionMsgs.push(`${targetToken.name} crashes through the entire ${mat} object (${tileHeight} square${tileHeight !== 1 ? 's' : ''}).`);
     return tileBottom;
   }
@@ -154,13 +154,12 @@ const breakTileFromTop = async (tile, fallDmg, undoOps, collisionMsgs, targetTok
     await addTags(tile, [`damaged:${newDamagedN}`]);
   }
 
-  undoOps.push(async () => {
-    for (const w of walls) await safeUpdate(w, { 'flags.wall-height.top': tileTop });
-    if (game.user.isGM) {
-      await removeTags(tile, [`damaged:${newDamagedN}`]);
-      if (prevDamagedTag) await addTags(tile, [prevDamagedTag]);
-    }
-  });
+  for (const w of walls) {
+    undoOps.push({ op: 'update', uuid: w.uuid, data: { 'flags.wall-height.top': tileTop } });
+  }
+  undoOps.push({ op: 'removeTags', uuid: tile.document.uuid, tags: [`damaged:${newDamagedN}`] });
+  if (prevDamagedTag) undoOps.push({ op: 'addTags', uuid: tile.document.uuid, tags: [prevDamagedTag] });
+
   collisionMsgs.push(`${targetToken.name} breaks ${squaresBroken} square${squaresBroken !== 1 ? 's' : ''} off the top of the ${mat} object (${tileHeight} tall, now ${newTop - tileBottom} remain).`);
   return newTop - 1;
 };
@@ -214,33 +213,30 @@ const splitTileAtElevation = async (tile, splitElev, undoOps, collisionMsgs) => 
     flags: { tagger: { tags: topTileAllTags } },
   }]);
 
+  const createdWalls = [];
   for (const [x1, y1, x2, y2] of edges) {
-    await safeCreateEmbedded(canvas.scene, 'Wall', [{
+    const result = await safeCreateEmbedded(canvas.scene, 'Wall', [{
       c: [x1, y1, x2, y2], move: 0, sight: 0, light: 0, sound: 0,
       dir: 0, door: 0,
       flags: { 'wall-height': { bottom: splitElev, top: tileTop }, tagger: { tags: topTileAllTags } },
     }]);
+    if (result?.[0]) createdWalls.push(result[0]);
   }
 
   collisionMsgs.push(`The ${mat} object splits at elevation ${splitElev}.`);
 
-  undoOps.push(async () => {
-    const topWalls = getByTag(topTag).filter(o => Array.isArray(o.c));
-    for (const w of topWalls) await safeDelete(w);
-    if (createdTiles.length) await safeDelete(createdTiles[0]);
-    const botWalls = getByTag(botTag).filter(o => Array.isArray(o.c));
-    for (const w of botWalls) {
-      await safeUpdate(w, { 'flags.wall-height.top': tileTop, ...restrict });
-      if (game.user.isGM) {
-        await removeTags(w, [botTag, 'damaged:0']);
-        await addTags(w, [blockTag]);
-      }
-    }
-    if (game.user.isGM) {
-      await removeTags(tile, [botTag]);
-      await addTags(tile, [blockTag]);
-    }
-  });
+  const createdTileUuid  = createdTiles?.[0] ? embeddedUuid(canvas.scene, 'Tile', createdTiles[0]) : null;
+  const createdWallUuids = createdWalls.map(w => embeddedUuid(canvas.scene, 'Wall', w));
+
+  for (const uuid of createdWallUuids) undoOps.push({ op: 'delete', uuid });
+  if (createdTileUuid) undoOps.push({ op: 'delete', uuid: createdTileUuid });
+  for (const w of walls) {
+    undoOps.push({ op: 'update',     uuid: w.uuid, data: { 'flags.wall-height.top': tileTop, ...restrict } });
+    undoOps.push({ op: 'removeTags', uuid: w.uuid, tags: [botTag, 'damaged:0'] });
+    undoOps.push({ op: 'addTags',    uuid: w.uuid, tags: [blockTag] });
+  }
+  undoOps.push({ op: 'removeTags', uuid: tile.document.uuid, tags: [botTag] });
+  undoOps.push({ op: 'addTags',    uuid: tile.document.uuid, tags: [blockTag] });
 };
 
 const applyFallDamage = async (targetToken, finalElev, landingGrid, agility, canFly, undoOps, collisionMsgs, fallReduction = 0, noFallDamage = false) => {
@@ -285,7 +281,7 @@ const applyFallDamage = async (targetToken, finalElev, landingGrid, agility, can
 
       await safeUpdate(targetToken.document, { elevation: actualLanding });
       await safeToggleStatusEffect(targetToken.actor, 'prone', { active: true });
-      undoOps.push(async () => safeToggleStatusEffect(targetToken.actor, 'prone', { active: false }));
+      undoOps.push({ op: 'status', uuid: targetToken.actor.uuid, effectId: 'prone', active: false });
 
       const landedOn = tokenAt(landingGrid.x, landingGrid.y, targetToken.id);
       if (landedOn) {
@@ -295,7 +291,7 @@ const applyFallDamage = async (targetToken, finalElev, landingGrid, agility, can
         const blockerMight = landedOn.actor?.system?.characteristics?.might?.value ?? 0;
         if (fallerSize > blockerMight) {
           await safeToggleStatusEffect(landedOn.actor, 'prone', { active: true });
-          undoOps.push(async () => safeToggleStatusEffect(landedOn.actor, 'prone', { active: false }));
+          undoOps.push({ op: 'status', uuid: landedOn.actor.uuid, effectId: 'prone', active: false });
           collisionMsgs.push(`${landedOn.name} is knocked prone (${targetToken.name}'s size ${fallerSize} exceeds their Might ${blockerMight}).`);
         }
         const chosen = await chooseFreeSquare(targetToken);
@@ -315,6 +311,23 @@ const applyFallDamage = async (targetToken, finalElev, landingGrid, agility, can
     }
   } else if (!isNaN(finalElev) && canFly && finalElev > 0) {
     collisionMsgs.push(`${targetToken.name} is launched into the air (elevation ${finalElev}). No fall damage since they can fly.`);
+  }
+};
+
+const buildUndoLog = (targetToken, startPos, startElevSnap, movedSnap, undoOps) => [
+  { op: 'update',  uuid: targetToken.document.uuid, data: { x: startPos.x, y: startPos.y, elevation: startElevSnap } },
+  { op: 'stamina', uuid: targetToken.actor.uuid, prevValue: movedSnap.prevValue, prevTemp: movedSnap.prevTemp, squadGroupUuid: movedSnap.squadGroup?.uuid ?? null, prevSquadHP: movedSnap.prevSquadHP },
+  ...undoOps,
+];
+
+const commitUndo = async (fullUndoLog) => {
+  window._forcedMovementUndo = async () => {
+    await replayUndo(fullUndoLog);
+    ui.notifications.info('Forced movement undone.');
+  };
+  if (!game.user.isGM) {
+    const socket = game.modules.get('draw-steel-combat-tools').api.socket;
+    await socket.executeAsGM('setForcedMovementUndo', fullUndoLog);
   }
 };
 
@@ -367,8 +380,8 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
     let summary = `<strong>${targetToken.name}</strong> forced: ${parts.join(', ')}.`;
     if (stability > 0 && !ignoreStability) {
       const stabParts = [];
-      if (distance !== reduced)                                parts.push(`push ${distance} to ${reduced}`);
-      if (Math.abs(verticalHeight) !== Math.abs(reducedVert)) parts.push(`vertical ${Math.abs(verticalHeight)} to ${Math.abs(reducedVert)}`);
+      if (distance !== reduced)                                stabParts.push(`push ${distance} to ${reduced}`);
+      if (Math.abs(verticalHeight) !== Math.abs(reducedVert)) stabParts.push(`vertical ${Math.abs(verticalHeight)} to ${Math.abs(reducedVert)}`);
       if (stabParts.length) summary += ` Stability reduced ${stabParts.join(', ')}.`;
     }
     return summary;
@@ -521,13 +534,7 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
         await applyFallDamage(targetToken, finalElev, startGrid, agility, canFly, undoOps, collisionMsgs, fallReduction, noFallDamage);
       }
 
-      window._forcedMovementUndo = async () => {
-        await safeUpdate(targetToken.document, { x: startPos.x, y: startPos.y, elevation: startElev });
-        await undoDamage(targetToken.actor, movedSnap);
-        for (const op of undoOps) await op();
-        ui.notifications.info('Forced movement undone.');
-      };
-
+      await commitUndo(buildUndoLog(targetToken, startPos, startElev, movedSnap, undoOps));
       await ChatMessage.create({
         content: buildSummary() + '<br>' + (collisionMsgs.length ? collisionMsgs.join('<br>') + '<br>' : '') + '@Macro[Forced Movement Undo]{Undo}',
       });
@@ -541,7 +548,6 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
     const collisionMsgs = [];
     let landingIndex    = path.length - 1;
     const movedSnap     = snapStamina(targetToken.actor);
-    let blockerSnap     = null;
 
     for (let i = 0; i < path.length; i++) {
       const step      = path[i];
@@ -607,18 +613,17 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
                   if (prevDmgTag) await removeTags(tile, [prevDmgTag]);
                   await addTags(tile, [`damaged:${prevDmgN + 1}`]);
                 }
-                undoOps.push(async () => {
-                  for (const w of allWalls) await safeUpdate(w, { 'flags.wall-height.top': prevTop });
-                  if (tile && game.user.isGM) {
-                    await removeTags(tile, [`damaged:${prevDmgN + 1}`]);
-                    if (prevDmgTag) await addTags(tile, [prevDmgTag]);
-                  }
-                });
+                for (const w of allWalls) {
+                  undoOps.push({ op: 'update', uuid: w.uuid, data: { 'flags.wall-height.top': prevTop } });
+                }
+                if (tile) {
+                  undoOps.push({ op: 'removeTags', uuid: tile.document.uuid, tags: [`damaged:${prevDmgN + 1}`] });
+                  if (prevDmgTag) undoOps.push({ op: 'addTags', uuid: tile.document.uuid, tags: [prevDmgTag] });
+                }
                 collisionMsgs.push(`The top of the ${mat} object collapses into the gap (now ${wallTop - 1 - wallBottom} square${wallTop - 1 - wallBottom !== 1 ? 's' : ''} tall).`);
               } else {
-                const prevWallData = allWalls.map(w => ({
-                  wall: w, restrict: { move: w.move, sight: w.sight, light: w.light, sound: w.sound },
-                }));
+                const origMat      = tile ? (getTags(tile).find(t => Object.keys(MATERIAL_ICONS).includes(t)) ?? 'stone') : 'stone';
+                const prevWallData = allWalls.map(w => ({ wall: w, restrict: { move: w.move, sight: w.sight, light: w.light, sound: w.sound } }));
                 for (const w of allWalls) {
                   await safeUpdate(w, { move: 0, sight: 0, light: 0, sound: 0 });
                   if (game.user.isGM) await addTags(w, ['broken']);
@@ -626,18 +631,13 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
                 if (tile) {
                   await safeUpdate(tile.document, { 'texture.src': MATERIAL_ICONS.broken, alpha: 0.8 });
                   if (game.user.isGM) await addTags(tile, ['broken']);
+                  undoOps.push({ op: 'update',     uuid: tile.document.uuid, data: { 'texture.src': MATERIAL_ICONS[origMat], alpha: MATERIAL_ALPHA[origMat] } });
+                  undoOps.push({ op: 'removeTags', uuid: tile.document.uuid, tags: ['broken'] });
                 }
-                undoOps.push(async () => {
-                  if (tile) {
-                    const origMat = getTags(tile).find(t => Object.keys(MATERIAL_ICONS).includes(t)) ?? 'stone';
-                    await safeUpdate(tile.document, { 'texture.src': MATERIAL_ICONS[origMat], alpha: MATERIAL_ALPHA[origMat] });
-                    if (game.user.isGM) await removeTags(tile, ['broken']);
-                  }
-                  for (const { wall: w, restrict } of prevWallData) {
-                    await safeUpdate(w, restrict);
-                    if (game.user.isGM) await removeTags(w, ['broken']);
-                  }
-                });
+                for (const { wall: w, restrict } of prevWallData) {
+                  undoOps.push({ op: 'update',     uuid: w.uuid, data: restrict });
+                  undoOps.push({ op: 'removeTags', uuid: w.uuid, tags: ['broken'] });
+                }
               }
             } else {
               await safeDelete(wall);
@@ -669,8 +669,9 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
           blockerPrev.squadGroup  = sharedGroup;
           blockerPrev.prevSquadHP = prevSharedHP;
         }
-        blockerSnap = blockerPrev;
-        if (blockerPrev) undoOps.push(() => undoDamage(blocker.actor, blockerSnap));
+        if (blockerPrev) {
+          undoOps.push({ op: 'stamina', uuid: blocker.actor.uuid, prevValue: blockerPrev.prevValue, prevTemp: blockerPrev.prevTemp, squadGroupUuid: blockerPrev.squadGroup?.uuid ?? null, prevSquadHP: blockerPrev.prevSquadHP });
+        }
 
         const dmgTotal  = remaining + bonusCreatureDmg;
         const bonusNote = bonusCreatureDmg ? ` (${remaining} + ${bonusCreatureDmg} bonus)` : '';
@@ -704,9 +705,8 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
           if (remaining >= rule.cost) {
             if (blockTag) {
               const walls        = getByTag(blockTag).filter(o => Array.isArray(o.c));
-              const prevWallData = walls.map(w => ({
-                wall: w, restrict: { move: w.move, sight: w.sight, light: w.light, sound: w.sound },
-              }));
+              const origMat      = getTags(tile).find(t => Object.keys(MATERIAL_ICONS).includes(t)) ?? 'stone';
+              const prevWallData = walls.map(w => ({ wall: w, restrict: { move: w.move, sight: w.sight, light: w.light, sound: w.sound } }));
               for (const wall of walls) {
                 await safeUpdate(wall, { move: 0, sight: 0, light: 0, sound: 0 });
                 if (game.user.isGM) await addTags(wall, ['broken']);
@@ -714,13 +714,12 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
               await safeUpdate(tile.document, { 'texture.src': MATERIAL_ICONS.broken, alpha: 0.8 });
               if (game.user.isGM) await addTags(tile, ['broken']);
 
-              undoOps.push(async () => {
-                if (game.user.isGM) await removeTags(tile, ['broken']);
-                for (const { wall, restrict } of prevWallData) {
-                  await safeUpdate(wall, restrict);
-                  if (game.user.isGM) await removeTags(wall, ['broken']);
-                }
-              });
+              undoOps.push({ op: 'update',     uuid: tile.document.uuid, data: { 'texture.src': MATERIAL_ICONS[origMat], alpha: MATERIAL_ALPHA[origMat] } });
+              undoOps.push({ op: 'removeTags', uuid: tile.document.uuid, tags: ['broken'] });
+              for (const { wall, restrict } of prevWallData) {
+                undoOps.push({ op: 'update',     uuid: wall.uuid, data: restrict });
+                undoOps.push({ op: 'removeTags', uuid: wall.uuid, tags: ['broken'] });
+              }
             } else {
               await safeDelete(tile.document);
             }
@@ -746,13 +745,7 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
     await safeUpdate(targetToken.document, { x: landingWorld.x, y: landingWorld.y, elevation: finalElev });
     await applyFallDamage(targetToken, finalElev, landingGrid, agility, canFly, undoOps, collisionMsgs, fallReduction, noFallDamage);
 
-    window._forcedMovementUndo = async () => {
-      await safeUpdate(targetToken.document, { x: startPos.x, y: startPos.y, elevation: startElevSnap });
-      await undoDamage(targetToken.actor, movedSnap);
-      for (const op of undoOps) await op();
-      ui.notifications.info('Forced movement undone.');
-    };
-
+    await commitUndo(buildUndoLog(targetToken, startPos, startElevSnap, movedSnap, undoOps));
     await ChatMessage.create({
       content: buildSummary() + '<br>' + (collisionMsgs.length ? collisionMsgs.join('<br>') + '<br>' : '') + '@Macro[Forced Movement Undo]{Undo}',
     });
@@ -840,6 +833,7 @@ export async function runForcedMovement(macroArgs = []) {
     const ignoreStability   = macroArgs[7] === 'true' || macroArgs[7] === true;
     const noCollisionDamage = macroArgs[8] === 'true' || macroArgs[8] === true;
     const keywords          = macroArgs[9] ? String(macroArgs[9]).split(',').map(k => k.trim().toLowerCase()).filter(Boolean) : [];
+    const range             = parseInt(macroArgs[10]) || 0;
 
     let verticalHeight = 0;
     if (verticalRaw !== undefined && verticalRaw !== '') {
@@ -848,8 +842,23 @@ export async function runForcedMovement(macroArgs = []) {
     }
     if (!type)           { ui.notifications.warn('Invalid type. Use Push, Pull, or Slide.'); return; }
     if (isNaN(distance)) { ui.notifications.warn('Invalid distance.'); return; }
+
     const { target, source } = getTargetAndSource();
     if (!target) { ui.notifications.warn('Target or select the creature to move.'); return; }
+
+    if (range > 0 && !game.user.isGM && source) {
+      const hDist   = canvas.grid.measurePath([
+        { x: source.center.x, y: source.center.y },
+        { x: target.center.x, y: target.center.y },
+      ]).distance;
+      const vDist   = Math.abs((source.document.elevation ?? 0) - (target.document.elevation ?? 0));
+      const adjDist = Math.max(hDist, vDist * canvas.grid.distance);
+      if (adjDist > range * canvas.grid.distance) {
+        ui.notifications.warn(`${target.name} is not within range.`);
+        return;
+      }
+    }
+
     await _runForcedMovement(type, distance, target, source, bonusCreatureDmg, bonusObjectDmg, verticalHeight, fallReduction, noFallDamage, ignoreStability, noCollisionDamage, keywords);
   } else {
     const { createFormGroup, createSelectInput, createNumberInput, createCheckboxInput } = foundry.applications.fields;

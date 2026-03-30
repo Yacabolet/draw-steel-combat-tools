@@ -2,6 +2,7 @@ import { runForcedMovement } from './forced-movement.js';
 import { WallBuilderPanel } from './wall-builder.js';
 import { runKnockback } from './knockback.js';
 import { registerChatHooks } from './chat-hooks.js';
+import { replayUndo } from './helpers.js';
 
 const api = {
   forcedMovement: runForcedMovement,
@@ -22,6 +23,13 @@ Hooks.once('init', () => {
 Hooks.once('socketlib.ready', () => {
   const socket = socketlib.registerModule('draw-steel-combat-tools');
   api.socket = socket;
+
+  socket.register('setForcedMovementUndo', (undoLog) => {
+    window._forcedMovementUndo = async () => {
+      await replayUndo(undoLog);
+      ui.notifications.info('Forced movement undone.');
+    };
+  });
 
   socket.register('updateDocument', async (uuid, data) => {
     const doc = await fromUuid(uuid);

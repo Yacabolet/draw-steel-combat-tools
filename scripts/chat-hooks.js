@@ -55,7 +55,7 @@ const injectButtons = (msg, el) => {
       const verticalHeight = effect.vertical ? String(effect.distance) : '';
       const kwArray        = data.keywords instanceof Set ? [...data.keywords] : (Array.isArray(data.keywords) ? data.keywords : []);
       const kw             = kwArray.join(',');
-      await api.forcedMovement([type, String(effect.distance), '0', '0', verticalHeight, '0', 'false', String(effect.ignoreStability), 'false', kw]);
+      await api.forcedMovement([type, String(effect.distance), '0', '0', verticalHeight, '0', 'false', String(effect.ignoreStability), 'false', kw, String(data.range ?? 0)]);
     });
     container.appendChild(btn);
   }
@@ -80,9 +80,13 @@ export function registerChatHooks() {
     const forced = getForcedEffects(item, abilityResult.tier);
     if (!forced.length) return;
 
+    const rawRange = item.system?.power?.distance?.base ?? item.system?.distance?.base ?? 0;
+    const range    = typeof rawRange === 'number' ? rawRange : 0;
+
     await msg.setFlag('draw-steel-combat-tools', 'forcedMovement', {
       effects: forced,
       keywords: Array.from(item.system?.keywords ?? []),
+      range,
       speakerToken: msg.speaker?.token ?? null,
     });
   };

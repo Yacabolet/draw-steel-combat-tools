@@ -83,6 +83,32 @@ export const getSquadGroup = (actor) => {
 
 const getSocket = () => game.modules.get('draw-steel-combat-tools').api.socket;
 
+export const replayUndo = async (ops) => {
+  for (const entry of ops) {
+    try {
+      const doc = await fromUuid(entry.uuid);
+      if (!doc) continue;
+      const obj = doc.object ?? doc;
+      switch (entry.op) {
+        case 'update':     await safeUpdate(doc, entry.data); break;
+        case 'delete':     await safeDelete(doc); break;
+        case 'addTags':    await addTags(obj, entry.tags); break;
+        case 'removeTags': await removeTags(obj, entry.tags); break;
+        case 'status':     await safeToggleStatusEffect(doc, entry.effectId, { active: entry.active }); break;
+        case 'stamina':
+          await safeUpdate(doc, { 'system.stamina.temporary': entry.prevTemp, 'system.stamina.value': entry.prevValue });
+          if (entry.squadGroupUuid && entry.prevSquadHP !== null) {
+            const sg = await fromUuid(entry.squadGroupUuid);
+            if (sg) await safeUpdate(sg, { 'system.staminaValue': entry.prevSquadHP });
+          }
+          break;
+      }
+    } catch (e) {
+      console.error('DSCT | replayUndo error on entry:', entry, e);
+    }
+  }
+};
+
 export const safeUpdate = async (document, data) => {
   if (document.isOwner) return await document.update(data);
   return await getSocket().executeAsGM('updateDocument', document.uuid, data);
