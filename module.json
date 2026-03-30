@@ -1,7 +1,7 @@
 {
   "id": "draw-steel-combat-tools",
   "title": "Draw Steel: Combat Tools",
-  "description": "<p>Draw Steel combat automation tools: Forced Movement, Wall Builder, and Knockback.</p>",
+  "description": "<p>Draw Steel combat automation tools.</p>",
   "version": "1.1.1",
   "socket": true,
   "compatibility": {
@@ -15,8 +15,7 @@
       "flags": {}
     }
   ],
-  "url": "https://github.com/Yacabolet/Draw-Steel---Combat-Tools",
-  "download": "https://github.com/Yacabolet/Draw-Steel---Combat-Tools/archive/refs/heads/main.zip",
+  "url": "https://github.com/Yacabolet/draw-steel-combat-tools",
   "flags": {
     "canUpload": true
   },
