@@ -7,7 +7,7 @@ import {
   getSquadGroup, applyDamage, undoDamage, snapStamina,
   hasFly, getWallBlockTileAt, getWallBlockTop, getWallBlockBottom,
   sizeRank,
-  safeUpdate, safeDelete, safeCreateEmbedded, safeToggleStatusEffect // Added Socket Wrappers
+  safeUpdate, safeDelete, safeCreateEmbedded, safeToggleStatusEffect,
 } from './helpers.js';
 
 const parseType = (raw) => {
@@ -129,7 +129,7 @@ const breakTileFromTop = async (tile, fallDmg, undoOps, collisionMsgs, targetTok
     }
     await safeUpdate(tile.document, { 'texture.src': MATERIAL_ICONS.broken, alpha: 0.8 });
     if (game.user.isGM) await addTags(tile, ['broken']);
-    
+
     undoOps.push(async () => {
       const restrict = WALL_RESTRICTIONS[mat] ?? WALL_RESTRICTIONS.stone;
       for (const w of walls) {
@@ -153,7 +153,7 @@ const breakTileFromTop = async (tile, fallDmg, undoOps, collisionMsgs, targetTok
     if (prevDamagedTag) await removeTags(tile, [prevDamagedTag]);
     await addTags(tile, [`damaged:${newDamagedN}`]);
   }
-  
+
   undoOps.push(async () => {
     for (const w of walls) await safeUpdate(w, { 'flags.wall-height.top': tileTop });
     if (game.user.isGM) {
@@ -188,7 +188,7 @@ const splitTileAtElevation = async (tile, splitElev, undoOps, collisionMsgs) => 
       await addTags(w, [botTag, 'damaged:0']);
     }
   }
-  
+
   if (game.user.isGM) {
     await removeTags(tile, [blockTag]);
     await addTags(tile, [botTag]);
@@ -211,14 +211,14 @@ const splitTileAtElevation = async (tile, splitElev, undoOps, collisionMsgs) => 
     alpha: 0.8, hidden: false, locked: false,
     occlusion: { mode: 0, alpha: 0 }, restrictions: { light: false, weather: false },
     video: { loop: false, autoplay: false, volume: 0 },
-    flags: { tagger: { tags: topTileAllTags } } // Automatically handle tags through socket
+    flags: { tagger: { tags: topTileAllTags } },
   }]);
-  
+
   for (const [x1, y1, x2, y2] of edges) {
     await safeCreateEmbedded(canvas.scene, 'Wall', [{
       c: [x1, y1, x2, y2], move: 0, sight: 0, light: 0, sound: 0,
       dir: 0, door: 0,
-      flags: { 'wall-height': { bottom: splitElev, top: tileTop }, tagger: { tags: topTileAllTags } }
+      flags: { 'wall-height': { bottom: splitElev, top: tileTop }, tagger: { tags: topTileAllTags } },
     }]);
   }
 
@@ -227,7 +227,7 @@ const splitTileAtElevation = async (tile, splitElev, undoOps, collisionMsgs) => 
   undoOps.push(async () => {
     const topWalls = getByTag(topTag).filter(o => Array.isArray(o.c));
     for (const w of topWalls) await safeDelete(w);
-    if (createdTiles.length) await safeDelete(createdTiles[0]); // Only works cleanly if GM
+    if (createdTiles.length) await safeDelete(createdTiles[0]);
     const botWalls = getByTag(botTag).filter(o => Array.isArray(o.c));
     for (const w of botWalls) {
       await safeUpdate(w, { 'flags.wall-height.top': tileTop, ...restrict });
@@ -319,17 +319,16 @@ const applyFallDamage = async (targetToken, finalElev, landingGrid, agility, can
 };
 
 const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonusCreatureDmg = 0, bonusObjectDmg = 0, verticalHeight = 0, fallReduction = 0, noFallDamage = false, ignoreStability = false, noCollisionDamage = false, keywords = []) => {
-  const GRID        = getGRID();
-  const stability   = ignoreStability ? 0 : (targetToken.actor?.system?.combat?.stability ?? 0);
+  const GRID      = getGRID();
+  const stability = ignoreStability ? 0 : (targetToken.actor?.system?.combat?.stability ?? 0);
 
-  // Melee abilities add +1 if the attacker is larger than the target
   let effectiveDistance = distance;
   if (keywords.includes('melee') && sourceToken) {
     const attackerRank = sizeRank(sourceToken.actor?.system?.combat?.size ?? { value: 1, letter: 'M' });
     const targetRank   = sizeRank(targetToken.actor?.system?.combat?.size ?? { value: 1, letter: 'M' });
     if (attackerRank > targetRank) {
       effectiveDistance += 1;
-      ui.notifications.info(`+1 ${type} — ${sourceToken.name} is larger than ${targetToken.name}.`);
+      ui.notifications.info(`+1 ${type} ${sourceToken.name} is larger than ${targetToken.name}.`);
     }
   }
 
@@ -368,8 +367,8 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
     let summary = `<strong>${targetToken.name}</strong> forced: ${parts.join(', ')}.`;
     if (stability > 0 && !ignoreStability) {
       const stabParts = [];
-      if (distance !== reduced)                                          stabParts.push(`push ${distance} to ${reduced}`);
-      if (Math.abs(verticalHeight) !== Math.abs(reducedVert))           stabParts.push(`vertical ${Math.abs(verticalHeight)} to ${Math.abs(reducedVert)}`);
+      if (distance !== reduced)                                parts.push(`push ${distance} to ${reduced}`);
+      if (Math.abs(verticalHeight) !== Math.abs(reducedVert)) parts.push(`vertical ${Math.abs(verticalHeight)} to ${Math.abs(reducedVert)}`);
       if (stabParts.length) summary += ` Stability reduced ${stabParts.join(', ')}.`;
     }
     return summary;
@@ -530,7 +529,7 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
       };
 
       await ChatMessage.create({
-        content: buildSummary() + '<br>' + (collisionMsgs.length ? collisionMsgs.join('<br>') + '<br>' : '') + '@Macro[Forced Movement Undo]{Undo}'
+        content: buildSummary() + '<br>' + (collisionMsgs.length ? collisionMsgs.join('<br>') + '<br>' : '') + '@Macro[Forced Movement Undo]{Undo}',
       });
       return;
     }
@@ -618,7 +617,7 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
                 collisionMsgs.push(`The top of the ${mat} object collapses into the gap (now ${wallTop - 1 - wallBottom} square${wallTop - 1 - wallBottom !== 1 ? 's' : ''} tall).`);
               } else {
                 const prevWallData = allWalls.map(w => ({
-                  wall: w, restrict: { move: w.move, sight: w.sight, light: w.light, sound: w.sound }
+                  wall: w, restrict: { move: w.move, sight: w.sight, light: w.light, sound: w.sound },
                 }));
                 for (const w of allWalls) {
                   await safeUpdate(w, { move: 0, sight: 0, light: 0, sound: 0 });
@@ -706,7 +705,7 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
             if (blockTag) {
               const walls        = getByTag(blockTag).filter(o => Array.isArray(o.c));
               const prevWallData = walls.map(w => ({
-                wall: w, restrict: { move: w.move, sight: w.sight, light: w.light, sound: w.sound }
+                wall: w, restrict: { move: w.move, sight: w.sight, light: w.light, sound: w.sound },
               }));
               for (const wall of walls) {
                 await safeUpdate(wall, { move: 0, sight: 0, light: 0, sound: 0 });
@@ -714,7 +713,7 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
               }
               await safeUpdate(tile.document, { 'texture.src': MATERIAL_ICONS.broken, alpha: 0.8 });
               if (game.user.isGM) await addTags(tile, ['broken']);
-              
+
               undoOps.push(async () => {
                 if (game.user.isGM) await removeTags(tile, ['broken']);
                 for (const { wall, restrict } of prevWallData) {
@@ -755,7 +754,7 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
     };
 
     await ChatMessage.create({
-      content: buildSummary() + '<br>' + (collisionMsgs.length ? collisionMsgs.join('<br>') + '<br>' : '') + '@Macro[Forced Movement Undo]{Undo}'
+      content: buildSummary() + '<br>' + (collisionMsgs.length ? collisionMsgs.join('<br>') + '<br>' : '') + '@Macro[Forced Movement Undo]{Undo}',
     });
   });
 };
@@ -841,8 +840,8 @@ export async function runForcedMovement(macroArgs = []) {
     const ignoreStability   = macroArgs[7] === 'true' || macroArgs[7] === true;
     const noCollisionDamage = macroArgs[8] === 'true' || macroArgs[8] === true;
     const keywords          = macroArgs[9] ? String(macroArgs[9]).split(',').map(k => k.trim().toLowerCase()).filter(Boolean) : [];
-    
-    let verticalHeight      = 0;
+
+    let verticalHeight = 0;
     if (verticalRaw !== undefined && verticalRaw !== '') {
       const sign = type === 'Pull' ? -1 : 1;
       verticalHeight = Math.abs(parseInt(verticalRaw) || 0) * sign;

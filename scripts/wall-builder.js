@@ -8,7 +8,7 @@ import {
 const SCALE = 1.2;
 const s = n => Math.round(n * SCALE);
 
-const MATERIALS      = ['glass', 'wood', 'stone', 'metal'];
+const MATERIALS       = ['glass', 'wood', 'stone', 'metal'];
 const MATERIAL_COLORS = { glass: 0x88ddff, wood: 0xaa6622, stone: 0x888888, metal: 0x4488aa };
 const MODE_COLORS     = { build: 0x44cc44, destroy: 0xcc4444, fix: 0x44aacc, transmute: 0xcc8800, break: 0xff6600 };
 
@@ -38,9 +38,9 @@ const wallEdges = (gx, gy) => {
 };
 
 const placeBlock = async (gx, gy, material, heightBottom = '', heightTop = '', isStable = false) => {
-  const GRID     = getGRID();
-  const blockId  = `wall-block-${foundry.utils.randomID(8)}`;
-  const tags     = ['obstacle', 'breakable', blockId, material];
+  const GRID    = getGRID();
+  const blockId = `wall-block-${foundry.utils.randomID(8)}`;
+  const tags    = ['obstacle', 'breakable', blockId, material];
   if (isStable) tags.push('stable');
   const restrict = WALL_RESTRICTIONS[material];
 
@@ -55,7 +55,7 @@ const placeBlock = async (gx, gy, material, heightBottom = '', heightTop = '', i
     hidden: false, locked: false,
     occlusion: { mode: 0, alpha: 0 },
     restrictions: { light: false, weather: false },
-    video: { loop: false, autoplay: false, volume: 0 }
+    video: { loop: false, autoplay: false, volume: 0 },
   }]);
   await addTags(tile, tags);
 
@@ -69,7 +69,7 @@ const placeBlock = async (gx, gy, material, heightBottom = '', heightTop = '', i
       move: restrict.move, sight: restrict.sight,
       light: restrict.light, sound: restrict.sound,
       dir: 0, door: 0,
-      flags: Object.keys(heightFlags).length ? heightFlags : {}
+      flags: Object.keys(heightFlags).length ? heightFlags : {},
     }]);
     await addTags(wall, tags);
   }
@@ -90,7 +90,7 @@ const breakBlock = async (tile) => {
 };
 
 const fixBlock = async (tile) => {
-  const blockTag = getBlockTag(tile);
+  const blockTag    = getBlockTag(tile);
   if (!blockTag) return;
   const tags        = getTags(tile);
   const material    = tags.find(t => MATERIALS.includes(t)) ?? 'stone';
@@ -183,11 +183,11 @@ export class WallBuilderPanel extends Application {
             const isBroken = hasTags(tile, 'broken');
             const mat      = getTags(tile).find(t => MATERIALS.includes(t));
             let color;
-            if (this._mode === 'destroy')        color = 0xcc4444;
-            else if (this._mode === 'fix')        color = isBroken ? 0x44aacc : 0x334455;
-            else if (this._mode === 'transmute')  color = mat ? (MATERIAL_COLORS[mat] ?? 0x888888) : 0x888888;
-            else if (this._mode === 'break')      color = isBroken ? 0x444444 : 0xff6600;
-            else color = isBroken ? 0xcc4444 : 0x44cc44;
+            if (this._mode === 'destroy')       color = 0xcc4444;
+            else if (this._mode === 'fix')       color = isBroken ? 0x44aacc : 0x334455;
+            else if (this._mode === 'transmute') color = mat ? (MATERIAL_COLORS[mat] ?? 0x888888) : 0x888888;
+            else if (this._mode === 'break')     color = isBroken ? 0x444444 : 0xff6600;
+            else                                 color = isBroken ? 0xcc4444 : 0x44cc44;
             const alpha = isBroken ? 0.35 : 0.2;
             graphics.beginFill(color, alpha);
             graphics.lineStyle(1, color, 0.8);
@@ -210,7 +210,7 @@ export class WallBuilderPanel extends Application {
       canvas.app.stage.addChild(overlay);
       let hoverGrid = null;
 
-      const onMove = (e) => { hoverGrid = toGrid(e.data.getLocalPosition(canvas.app.stage)); redraw(hoverGrid); };
+      const onMove  = (e) => { hoverGrid = toGrid(e.data.getLocalPosition(canvas.app.stage)); redraw(hoverGrid); };
       const onClick = (e) => {
         const gpos = toGrid(e.data.getLocalPosition(canvas.app.stage));
         const idx  = selected.findIndex(g => g.x === gpos.x && g.y === gpos.y);

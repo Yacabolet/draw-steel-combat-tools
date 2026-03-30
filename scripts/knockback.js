@@ -28,7 +28,7 @@ export async function runKnockback() {
     return;
   }
 
-  const hDist   = canvas.grid.measurePath([
+  const hDist = canvas.grid.measurePath([
     { x: attackerToken.center.x, y: attackerToken.center.y },
     { x: targetToken.center.x,   y: targetToken.center.y }
   ]).distance;

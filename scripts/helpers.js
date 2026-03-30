@@ -81,10 +81,6 @@ export const getSquadGroup = (actor) => {
   return null;
 };
 
-// ==========================================
-// SOCKETLIB WRAPPERS
-// ==========================================
-
 const getSocket = () => game.modules.get('draw-steel-combat-tools').api.socket;
 
 export const safeUpdate = async (document, data) => {
@@ -111,9 +107,6 @@ export const safeTakeDamage = async (actor, amount, options = {}) => {
   if (actor.isOwner) return await actor.system.takeDamage(amount, options);
   return await getSocket().executeAsGM('takeDamage', actor.uuid, amount, options);
 };
-
-// ==========================================
-// (Leave applyDamage, undoDamage, snapStamina, etc. exactly as they were below this point)
 
 export const applyDamage = async (actor, amount, squadGroupOverride = undefined) => {
   const prevValue   = actor.system.stamina.value;

@@ -1,8 +1,5 @@
 import { runForcedMovement } from './forced-movement.js';
 
-const CHAT_VERSION = "v1.0.5 - HTML Hook Fix";
-console.log(`🔴 DSCT DEBUG | Loaded chat-hooks.js - Version: ${CHAT_VERSION}`);
-
 const getForcedEffects = (item, tier) => {
   const effectsCollection = item.system?.power?.effects;
   const effects = effectsCollection?.contents ?? Object.values(effectsCollection ?? {});
@@ -11,12 +8,12 @@ const getForcedEffects = (item, tier) => {
     if (effect.type !== 'forced') continue;
     const tierData = effect.forced?.[`tier${tier}`];
     if (!tierData) continue;
-    const distance        = parseInt(tierData.distance);
+    const distance = parseInt(tierData.distance);
     if (isNaN(distance) || distance <= 0) continue;
-    const propertiesRaw   = tierData.properties;
-    const properties      = Array.isArray(propertiesRaw) ? propertiesRaw
-                          : propertiesRaw instanceof Set  ? [...propertiesRaw]
-                          : (propertiesRaw?.contents ?? Object.values(propertiesRaw ?? {}));
+    const propertiesRaw = tierData.properties;
+    const properties = Array.isArray(propertiesRaw) ? propertiesRaw
+                     : propertiesRaw instanceof Set  ? [...propertiesRaw]
+                     : (propertiesRaw?.contents ?? Object.values(propertiesRaw ?? {}));
     const vertical        = properties.includes('vertical');
     const ignoreStability = properties.includes('ignoresImmunity');
     for (const movement of (tierData.movement ?? [])) {
@@ -29,15 +26,13 @@ const getForcedEffects = (item, tier) => {
 const injectButtons = (msg, el) => {
   const data = msg.getFlag('draw-steel-combat-tools', 'forcedMovement');
   if (!data) return;
-  
-  // Prevent duplicate injections
-  if (el.querySelector('.dsct-forced-buttons')) return; 
+  if (el.querySelector('.dsct-forced-buttons')) return;
 
   const footer = el.querySelector('.message-part-buttons');
   const content = el.querySelector('.message-content');
   const target = footer ?? content ?? el;
   if (!target) return;
-  
+
   const container = document.createElement('div');
   container.className = 'dsct-forced-buttons';
   container.style.cssText = 'display:contents;';
@@ -60,7 +55,6 @@ const injectButtons = (msg, el) => {
       const verticalHeight = effect.vertical ? String(effect.distance) : '';
       const kwArray        = data.keywords instanceof Set ? [...data.keywords] : (Array.isArray(data.keywords) ? data.keywords : []);
       const kw             = kwArray.join(',');
-      
       await api.forcedMovement([type, String(effect.distance), '0', '0', verticalHeight, '0', 'false', String(effect.ignoreStability), 'false', kw]);
     });
     container.appendChild(btn);
@@ -70,20 +64,14 @@ const injectButtons = (msg, el) => {
 };
 
 export function registerChatHooks() {
-  
-  // Logic to attach our custom flag to the message
   const trySetFlag = async (msg) => {
-    // Only the person rolling should write to the database to prevent duplicate writes
     if (msg.author.id !== game.user.id) return;
-    
-    // If the flag is already there, our job is done
     if (msg.getFlag('draw-steel-combat-tools', 'forcedMovement')) return;
 
     const parts = msg.system?.parts?.contents ?? Object.values(msg.system?.parts ?? {});
     const abilityUse    = parts.find(p => p.type === 'abilityUse');
     const abilityResult = parts.find(p => p.type === 'abilityResult');
-    
-    // If Draw Steel hasn't attached the tier data yet, abort and wait for the next update
+
     if (!abilityUse?.abilityUuid || !abilityResult?.tier) return;
 
     const item = await fromUuid(abilityUse.abilityUuid);
@@ -97,23 +85,17 @@ export function registerChatHooks() {
       keywords: Array.from(item.system?.keywords ?? []),
       speakerToken: msg.speaker?.token ?? null,
     });
-    console.log('🔴 DSCT DEBUG | Flag set successfully on msg:', msg.id);
   };
 
-  // Logic to actually put the HTML button on the screen
   const tryInject = (msg) => {
-    // Yield the thread to let Draw Steel finish its own async HTML rendering
     setTimeout(() => {
       const liveEl = document.querySelector(`[data-message-id="${msg.id}"]`);
       if (liveEl) injectButtons(msg, liveEl);
     }, 500);
   };
 
-  // Listen for both creation and subsequent system updates to catch the tier data
   Hooks.on('createChatMessage', trySetFlag);
   Hooks.on('updateChatMessage', trySetFlag);
-
-  // V13 COMPATIBLE: Attempt to inject whenever the message initially renders or when our flag is added
   Hooks.on('renderChatMessageHTML', (msg) => tryInject(msg));
   Hooks.on('updateChatMessage', (msg) => tryInject(msg));
 }
