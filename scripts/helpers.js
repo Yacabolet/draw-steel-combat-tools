@@ -167,6 +167,29 @@ export const hasFly = (actor) => {
 export const sizeRank = (size) =>
   size.value >= 2 ? size.value + 2 : ({ T: 0, S: 1, M: 2, L: 3 })[size.letter] ?? 2;
 
+export const canForcedMoveTarget = (attackerActor, targetActor) => {
+  const targetSizeValue = targetActor?.system?.combat?.size?.value ?? 1;
+  const might           = attackerActor?.system?.characteristics?.might?.value ?? 0;
+  if (might >= 2 && targetSizeValue <= might) return true;
+  const attackerRank = sizeRank(attackerActor?.system?.combat?.size ?? { value: 1, letter: 'M' });
+  const targetRank   = sizeRank(targetActor?.system?.combat?.size ?? { value: 1, letter: 'M' });
+  return attackerRank >= targetRank;
+};
+
+export const getItemDsid = (item) => item.system?._dsid ?? item.toObject().system?._dsid ?? null;
+
+export const getItemRange = (item) => {
+  const dist = item.system?.distance;
+  if (!dist) return 0;
+  const p = parseInt(dist.primary)   || 0;
+  const s = parseInt(dist.secondary) || 0;
+  const t = parseInt(dist.tertiary)  || 0;
+  if (dist.type === 'meleeRanged')              return Math.max(p, s);
+  if (dist.type === 'line')                      return p + t;
+  if (dist.type === 'cube' || dist.type === 'wall') return p + s;
+  return p;
+};
+
 export const getWallBlockTileAt = (gx, gy) => {
   return canvas.tiles.placeables.find(t => {
     const tg = toGrid(t.document);

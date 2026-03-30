@@ -1,4 +1,5 @@
 import { runForcedMovement } from './forced-movement.js';
+import { canForcedMoveTarget, getItemRange, getItemDsid } from './helpers.js';
 
 const getForcedEffects = (item, tier) => {
   const effectsCollection = item.system?.power?.effects;
@@ -51,6 +52,18 @@ const injectButtons = (msg, el) => {
     btn.addEventListener('click', async () => {
       const api = game.modules.get('draw-steel-combat-tools')?.api;
       if (!api) { ui.notifications.error('Draw Steel: Combat Tools not active.'); return; }
+
+      if (!game.user.isGM && (data.dsid === 'knockback' || data.dsid === 'grab')) {
+        const targets    = [...game.user.targets];
+        const controlled = canvas.tokens.controlled;
+        const target     = targets.length === 1 ? targets[0] : null;
+        const source     = targets.length === 1 && controlled.length === 1 ? controlled[0] : null;
+        if (source && target && !canForcedMoveTarget(source.actor, target.actor)) {
+          ui.notifications.warn(`${source.name} cannot force-move ${target.name} (size too large for their Might and size).`);
+          return;
+        }
+      }
+
       const type           = effect.movement.charAt(0).toUpperCase() + effect.movement.slice(1);
       const verticalHeight = effect.vertical ? String(effect.distance) : '';
       const kwArray        = data.keywords instanceof Set ? [...data.keywords] : (Array.isArray(data.keywords) ? data.keywords : []);
@@ -80,13 +93,14 @@ export function registerChatHooks() {
     const forced = getForcedEffects(item, abilityResult.tier);
     if (!forced.length) return;
 
-    const rawRange = item.system?.power?.distance?.base ?? item.system?.distance?.base ?? 0;
-    const range    = typeof rawRange === 'number' ? rawRange : 0;
+    const range = getItemRange(item);
+    const dsid  = getItemDsid(item);
 
     await msg.setFlag('draw-steel-combat-tools', 'forcedMovement', {
       effects: forced,
       keywords: Array.from(item.system?.keywords ?? []),
       range,
+      dsid,
       speakerToken: msg.speaker?.token ?? null,
     });
   };
