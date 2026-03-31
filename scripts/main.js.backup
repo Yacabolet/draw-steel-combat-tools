@@ -1,7 +1,7 @@
 import { runForcedMovement } from './forced-movement.js';
 import { WallBuilderPanel } from './wall-builder.js';
 import { runKnockback } from './knockback.js';
-import { registerChatHooks, refreshChatInjections } from './chat-hooks.js';
+import { registerChatHooks } from './chat-hooks.js';
 import { replayUndo } from './helpers.js';
 
 const api = {
@@ -18,13 +18,6 @@ const api = {
 Hooks.once('init', () => {
   game.modules.get('draw-steel-combat-tools').api = api;
   registerChatHooks();
-
-  game.keybindings.register('draw-steel-combat-tools', 'refreshChatInjections', {
-    name: 'Refresh Chat Forced Movement Buttons',
-    hint: 'Re-injects Execute buttons into any chat messages that have forced movement data.',
-    editable: [{ key: 'KeyR', modifiers: ['Shift'] }],
-    onDown: () => { refreshChatInjections(); return true; },
-  });
 });
 
 Hooks.once('socketlib.ready', () => {

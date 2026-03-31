@@ -40,8 +40,9 @@ const injectButtons = (msg, el) => {
 
   for (const effect of data.effects) {
     const label = [
-      effect.vertical ? 'Vertical' : '',
-      `${effect.movement.charAt(0).toUpperCase() + effect.movement.slice(1)} ${effect.distance}`,
+      `Execute ${effect.name} ${effect.distance}`,
+      effect.vertical        ? '(vertical)'          : '',
+      effect.ignoreStability ? '(ignores stability)' : '',
     ].filter(Boolean).join(' ');
 
     const btn = document.createElement('button');
@@ -74,10 +75,6 @@ const injectButtons = (msg, el) => {
 
   target.appendChild(container);
 };
-
-export function refreshChatInjections() {
-  ui.chat.render(true);
-}
 
 export function registerChatHooks() {
   const trySetFlag = async (msg) => {

@@ -335,21 +335,19 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
   const GRID      = getGRID();
   const stability = ignoreStability ? 0 : (targetToken.actor?.system?.combat?.stability ?? 0);
 
-  let effectiveDistance   = distance;
-  let effectiveVertical   = verticalHeight;
+  let effectiveDistance = distance;
   if (keywords.includes('melee') && sourceToken) {
     const attackerRank = sizeRank(sourceToken.actor?.system?.combat?.size ?? { value: 1, letter: 'M' });
     const targetRank   = sizeRank(targetToken.actor?.system?.combat?.size ?? { value: 1, letter: 'M' });
     if (attackerRank > targetRank) {
       effectiveDistance += 1;
-      if (effectiveVertical !== 0) effectiveVertical += effectiveVertical > 0 ? 1 : -1;
       ui.notifications.info(`+1 ${type} ${sourceToken.name} is larger than ${targetToken.name}.`);
     }
   }
 
   const reduced     = Math.max(0, effectiveDistance - stability);
-  const vertSign    = effectiveVertical >= 0 ? 1 : -1;
-  const reducedVert = Math.max(0, Math.abs(effectiveVertical) - stability) * vertSign;
+  const vertSign    = verticalHeight >= 0 ? 1 : -1;
+  const reducedVert = Math.max(0, Math.abs(verticalHeight) - stability) * vertSign;
   const isVertical  = reducedVert !== 0;
 
   if (reduced === 0 && reducedVert === 0) {
@@ -359,8 +357,8 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
 
   if (stability > 0) {
     const parts = [];
-    if (distance > 0)                    parts.push(`push ${distance} to ${reduced}`);
-    if (Math.abs(effectiveVertical) > 0) parts.push(`vertical ${Math.abs(effectiveVertical)} to ${Math.abs(reducedVert)}`);
+    if (distance > 0)                 parts.push(`push ${distance} to ${reduced}`);
+    if (Math.abs(verticalHeight) > 0) parts.push(`vertical ${Math.abs(verticalHeight)} to ${Math.abs(reducedVert)}`);
     ui.notifications.info(`${targetToken.name}'s stability reduces forced movement by ${stability} (${parts.join(', ')}).`);
   }
 
@@ -738,20 +736,13 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
     }
 
     const landingGrid      = landingIndex >= 0 ? path[landingIndex] : startGrid;
+    const landingWorld     = toWorld(landingGrid);
     const landingStepIndex = landingIndex >= 0 ? landingIndex : -1;
-
-    const stepsToAnimate = landingIndex >= 0 ? path.slice(0, landingIndex + 1) : [];
-    for (let s = 0; s < stepsToAnimate.length; s++) {
-      const stepWorld = toWorld(stepsToAnimate[s]);
-      const stepElev  = isVertical && reduced > 0
-        ? startElev + Math.round(reducedVert * (s + 1) / reduced)
-        : startElev;
-      await safeUpdate(targetToken.document, { x: stepWorld.x, y: stepWorld.y, elevation: stepElev });
-      await new Promise(r => setTimeout(r, 80));
-    }
-    const finalElev = isVertical && reduced > 0
+    const finalElev        = isVertical && reduced > 0
       ? startElev + Math.round(reducedVert * (landingStepIndex + 1) / reduced)
       : startElev;
+
+    await safeUpdate(targetToken.document, { x: landingWorld.x, y: landingWorld.y, elevation: finalElev });
     await applyFallDamage(targetToken, finalElev, landingGrid, agility, canFly, undoOps, collisionMsgs, fallReduction, noFallDamage);
 
     await commitUndo(buildUndoLog(targetToken, startPos, startElevSnap, movedSnap, undoOps));
@@ -852,39 +843,23 @@ export async function runForcedMovement(macroArgs = []) {
     if (!type)           { ui.notifications.warn('Invalid type. Use Push, Pull, or Slide.'); return; }
     if (isNaN(distance)) { ui.notifications.warn('Invalid distance.'); return; }
 
-    const allTargets = [...game.user.targets];
-    const controlled = canvas.tokens.controlled;
-    const source     = allTargets.length >= 1 && controlled.length === 1 ? controlled[0] : null;
+    const { target, source } = getTargetAndSource();
+    if (!target) { ui.notifications.warn('Target or select the creature to move.'); return; }
 
-    if (allTargets.length === 0) {
-      const { target } = getTargetAndSource();
-      if (!target) { ui.notifications.warn('Target or select the creature to move.'); return; }
-
-      if (range > 0 && !game.user.isGM && source) {
-        const hDist   = canvas.grid.measurePath([{ x: source.center.x, y: source.center.y }, { x: target.center.x, y: target.center.y }]).distance;
-        const vDist   = Math.abs((source.document.elevation ?? 0) - (target.document.elevation ?? 0));
-        const adjDist = Math.max(hDist, vDist * canvas.grid.distance);
-        if (adjDist > range * canvas.grid.distance) { ui.notifications.warn(`${target.name} is not within range.`); return; }
-      }
-
-      await _runForcedMovement(type, distance, target, source, bonusCreatureDmg, bonusObjectDmg, verticalHeight, fallReduction, noFallDamage, ignoreStability, noCollisionDamage, keywords);
-    } else {
-      const remaining = [...allTargets];
-      while (remaining.length > 0) {
-        const chosen = await pickTarget(remaining);
-        if (!chosen) break;
-        remaining.splice(remaining.findIndex(t => t.id === chosen.id), 1);
-
-        if (range > 0 && !game.user.isGM && source) {
-          const hDist   = canvas.grid.measurePath([{ x: source.center.x, y: source.center.y }, { x: chosen.center.x, y: chosen.center.y }]).distance;
-          const vDist   = Math.abs((source.document.elevation ?? 0) - (chosen.document.elevation ?? 0));
-          const adjDist = Math.max(hDist, vDist * canvas.grid.distance);
-          if (adjDist > range * canvas.grid.distance) { ui.notifications.warn(`${chosen.name} is not within range, skipping.`); continue; }
-        }
-
-        await _runForcedMovement(type, distance, chosen, source, bonusCreatureDmg, bonusObjectDmg, verticalHeight, fallReduction, noFallDamage, ignoreStability, noCollisionDamage, keywords);
+    if (range > 0 && !game.user.isGM && source) {
+      const hDist   = canvas.grid.measurePath([
+        { x: source.center.x, y: source.center.y },
+        { x: target.center.x, y: target.center.y },
+      ]).distance;
+      const vDist   = Math.abs((source.document.elevation ?? 0) - (target.document.elevation ?? 0));
+      const adjDist = Math.max(hDist, vDist * canvas.grid.distance);
+      if (adjDist > range * canvas.grid.distance) {
+        ui.notifications.warn(`${target.name} is not within range.`);
+        return;
       }
     }
+
+    await _runForcedMovement(type, distance, target, source, bonusCreatureDmg, bonusObjectDmg, verticalHeight, fallReduction, noFallDamage, ignoreStability, noCollisionDamage, keywords);
   } else {
     const { createFormGroup, createSelectInput, createNumberInput, createCheckboxInput } = foundry.applications.fields;
     const content = document.createElement('div');
