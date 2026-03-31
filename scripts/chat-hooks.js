@@ -52,11 +52,12 @@ const injectButtons = (msg, el) => {
       const api = game.modules.get('draw-steel-combat-tools')?.api;
       if (!api) { ui.notifications.error('Draw Steel: Combat Tools not active.'); return; }
 
+      const targets    = [...game.user.targets];
+      const controlled = canvas.tokens.controlled;
+      const target     = targets.length === 1 ? targets[0] : null;
+      const source     = targets.length === 1 && controlled.length === 1 ? controlled[0] : null;
+
       if (!game.user.isGM && (data.dsid === 'knockback' || data.dsid === 'grab')) {
-        const targets    = [...game.user.targets];
-        const controlled = canvas.tokens.controlled;
-        const target     = targets.length === 1 ? targets[0] : null;
-        const source     = targets.length === 1 && controlled.length === 1 ? controlled[0] : null;
         if (source && target && !canForcedMoveTarget(source.actor, target.actor)) {
           ui.notifications.warn(`${source.name} cannot force-move ${target.name} (size too large for their Might and size).`);
           return;
@@ -67,7 +68,14 @@ const injectButtons = (msg, el) => {
       const verticalHeight = effect.vertical ? String(effect.distance) : '';
       const kwArray        = data.keywords instanceof Set ? [...data.keywords] : (Array.isArray(data.keywords) ? data.keywords : []);
       const kw             = kwArray.join(',');
-      await api.forcedMovement([type, String(effect.distance), '0', '0', verticalHeight, '0', 'false', String(effect.ignoreStability), 'false', kw, String(data.range ?? 0)]);
+
+      const exceptions = [];
+      if (source) {
+        const hasPrimordialStrength = source.actor?.items?.some(i => getItemDsid(i) === 'primordial-strength');
+        if (hasPrimordialStrength) exceptions.push('primordial-strength');
+      }
+
+      await api.forcedMovement([type, String(effect.distance), exceptions.join(','), verticalHeight, '0', 'false', String(effect.ignoreStability), 'false', kw, String(data.range ?? 0)]);
     });
     container.appendChild(btn);
   }
@@ -99,8 +107,25 @@ export function registerChatHooks() {
     const range = getItemRange(item);
     const dsid  = getItemDsid(item);
 
+    const speakerTokenId = msg.speaker?.token;
+    const speakerToken   = speakerTokenId ? canvas.tokens.get(speakerTokenId) : null;
+    const speakerActor   = speakerToken?.actor ?? (msg.speaker?.actor ? game.actors.get(msg.speaker.actor) : null);
+
+    let totalBonus = 0;
+    if (dsid === 'knockback' && speakerActor) {
+      const itemDsids = speakerActor.items.map(i => getItemDsid(i));
+      // TODO: Growing Ferocity bonus should only apply if the actor had at least 2 heroic resource since the start of their turn
+      if (itemDsids.includes('growing-ferocity') && itemDsids.includes('berserker')) {
+        totalBonus += speakerActor.system?.characteristics?.might?.value ?? 0;
+      }
+    }
+
+    const boostedForced = totalBonus > 0
+      ? forced.map(e => ({ ...e, distance: e.distance + totalBonus }))
+      : forced;
+
     await msg.setFlag('draw-steel-combat-tools', 'forcedMovement', {
-      effects: forced,
+      effects: boostedForced,
       keywords: Array.from(item.system?.keywords ?? []),
       range,
       dsid,

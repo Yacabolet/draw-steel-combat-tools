@@ -834,15 +834,14 @@ export async function runForcedMovement(macroArgs = []) {
   if (macroArgs.length >= 2) {
     const type              = parseType(macroArgs[0]);
     const distance          = parseInt(macroArgs[1]);
-    const bonusCreatureDmg  = parseInt(macroArgs[2]) || 0;
-    const bonusObjectDmg    = parseInt(macroArgs[3]) || 0;
-    const verticalRaw       = macroArgs[4];
-    const fallReduction     = parseInt(macroArgs[5]) || 0;
-    const noFallDamage      = macroArgs[6] === 'true' || macroArgs[6] === true;
-    const ignoreStability   = macroArgs[7] === 'true' || macroArgs[7] === true;
-    const noCollisionDamage = macroArgs[8] === 'true' || macroArgs[8] === true;
-    const keywords          = macroArgs[9] ? String(macroArgs[9]).split(',').map(k => k.trim().toLowerCase()).filter(Boolean) : [];
-    const range             = parseInt(macroArgs[10]) || 0;
+    const exceptionsRaw     = macroArgs[2] ? String(macroArgs[2]) : '';
+    const verticalRaw       = macroArgs[3];
+    const fallReduction     = parseInt(macroArgs[4]) || 0;
+    const noFallDamage      = macroArgs[5] === 'true' || macroArgs[5] === true;
+    const ignoreStability   = macroArgs[6] === 'true' || macroArgs[6] === true;
+    const noCollisionDamage = macroArgs[7] === 'true' || macroArgs[7] === true;
+    const keywords          = macroArgs[8] ? String(macroArgs[8]).split(',').map(k => k.trim().toLowerCase()).filter(Boolean) : [];
+    const range             = parseInt(macroArgs[9]) || 0;
 
     let verticalHeight = 0;
     if (verticalRaw !== undefined && verticalRaw !== '') {
@@ -851,6 +850,16 @@ export async function runForcedMovement(macroArgs = []) {
     }
     if (!type)           { ui.notifications.warn('Invalid type. Use Push, Pull, or Slide.'); return; }
     if (isNaN(distance)) { ui.notifications.warn('Invalid distance.'); return; }
+
+    const parseExceptions = (str, srcToken) => {
+      const tags = str.split(',').map(t => t.trim()).filter(Boolean);
+      let bonusCreatureDmg = 0;
+      let bonusObjectDmg   = 0;
+      if (tags.includes('primordial-strength') && srcToken) {
+        bonusObjectDmg += srcToken.actor?.system?.characteristics?.might?.value ?? 0;
+      }
+      return { bonusCreatureDmg, bonusObjectDmg };
+    };
 
     const allTargets = [...game.user.targets];
     const controlled = canvas.tokens.controlled;
@@ -867,6 +876,7 @@ export async function runForcedMovement(macroArgs = []) {
         if (adjDist > range * canvas.grid.distance) { ui.notifications.warn(`${target.name} is not within range.`); return; }
       }
 
+      const { bonusCreatureDmg, bonusObjectDmg } = parseExceptions(exceptionsRaw, source);
       await _runForcedMovement(type, distance, target, source, bonusCreatureDmg, bonusObjectDmg, verticalHeight, fallReduction, noFallDamage, ignoreStability, noCollisionDamage, keywords);
     } else {
       const remaining = [...allTargets];
@@ -882,6 +892,7 @@ export async function runForcedMovement(macroArgs = []) {
           if (adjDist > range * canvas.grid.distance) { ui.notifications.warn(`${chosen.name} is not within range, skipping.`); continue; }
         }
 
+        const { bonusCreatureDmg, bonusObjectDmg } = parseExceptions(exceptionsRaw, source);
         await _runForcedMovement(type, distance, chosen, source, bonusCreatureDmg, bonusObjectDmg, verticalHeight, fallReduction, noFallDamage, ignoreStability, noCollisionDamage, keywords);
       }
     }

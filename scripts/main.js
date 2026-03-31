@@ -1,6 +1,5 @@
 import { runForcedMovement } from './forced-movement.js';
 import { WallBuilderPanel } from './wall-builder.js';
-import { runKnockback } from './knockback.js';
 import { registerChatHooks, refreshChatInjections } from './chat-hooks.js';
 import { replayUndo } from './helpers.js';
 
@@ -11,7 +10,6 @@ const api = {
     if (existing) existing.close();
     else new WallBuilderPanel().render(true);
   },
-  knockback: runKnockback,
   socket: null,
 };
 
