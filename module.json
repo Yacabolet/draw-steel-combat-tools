@@ -4,54 +4,21 @@
   "description": "<p>Draw Steel combat automation tools.</p>",
   "version": "1.1.1",
   "socket": true,
-  "compatibility": {
-    "minimum": "13",
-    "verified": "13"
-  },
-  "authors": [
-    {
-      "name": "Ady",
-      "discord": "AdyGenie",
-      "flags": {}
-    }
-  ],
+  "compatibility": { "minimum": "13", "verified": "13" },
+  "authors": [{ "name": "Ady", "discord": "AdyGenie", "flags": {} }],
   "url": "https://github.com/Yacabolet/draw-steel-combat-tools",
-  "flags": {
-    "canUpload": true
-  },
+  "flags": { "canUpload": true },
   "relationships": {
-    "systems": [
-      {
-        "id": "draw-steel",
-        "type": "system",
-        "compatibility": {}
-      }
-    ],
+    "systems": [{ "id": "draw-steel", "type": "system", "compatibility": {} }],
     "requires": [
-      {
-        "id": "tagger",
-        "type": "module",
-        "manifest": "https://github.com/fantasycalendar/FoundryVTT-Tagger/releases/latest/download/module.json",
-        "compatibility": {
-          "minimum": "1.0"
-        }
-      },
-      {
-        "id": "wall-height",
-        "type": "module",
-        "compatibility": {
-          "minimum": "7.0"
-        }
-      },
-      {
-        "id": "socketlib",
-        "type": "module",
-        "compatibility": {}
-      }
+      { "id": "tagger", "type": "module", "manifest": "https://github.com/fantasycalendar/FoundryVTT-Tagger/releases/latest/download/module.json", "compatibility": { "minimum": "1.0" } },
+      { "id": "wall-height", "type": "module", "compatibility": { "minimum": "7.0" } },
+      { "id": "socketlib", "type": "module", "compatibility": {} }
     ]
   },
   "esmodules": [
     "scripts/helpers.js",
+    "scripts/wall-builder-settings.js",
     "scripts/forced-movement.js",
     "scripts/wall-builder.js",
     "scripts/chat-hooks.js",

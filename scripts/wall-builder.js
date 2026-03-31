@@ -2,7 +2,7 @@ import {
   MATERIAL_ICONS, MATERIAL_ALPHA, WALL_RESTRICTIONS,
   getMaterial, tileAt,
   hasTags, getTags, getByTag, addTags, removeTags,
-  toGrid, toWorld, GRID as getGRID,
+  toGrid, toWorld, GRID as getGRID, getSetting,
 } from './helpers.js';
 
 const SCALE = 1.2;
@@ -42,7 +42,7 @@ const placeBlock = async (gx, gy, material, heightBottom = '', heightTop = '', i
   const blockId = `wall-block-${foundry.utils.randomID(8)}`;
   const tags    = ['obstacle', 'breakable', blockId, material];
   if (isStable) tags.push('stable');
-  const restrict = WALL_RESTRICTIONS[material];
+  const restrict = WALL_RESTRICTIONS()[material];
 
   const tileElevation = heightBottom !== '' ? heightBottom - 1 : undefined;
 
@@ -94,7 +94,7 @@ const fixBlock = async (tile) => {
   if (!blockTag) return;
   const tags        = getTags(tile);
   const material    = tags.find(t => MATERIALS.includes(t)) ?? 'stone';
-  const restrict    = WALL_RESTRICTIONS[material];
+  const restrict    = WALL_RESTRICTIONS()[material];
   const damagedTag  = tags.find(t => t.startsWith('damaged:'));
   const squaresBack = damagedTag ? parseInt(damagedTag.split(':')[1]) : 0;
 
@@ -126,7 +126,7 @@ const transmuteBlock = async (tile, newMaterial) => {
   if (!blockTag) return;
   const oldTags  = getTags(tile);
   const oldMat   = oldTags.find(t => MATERIALS.includes(t));
-  const restrict = WALL_RESTRICTIONS[newMaterial];
+  const restrict = WALL_RESTRICTIONS()[newMaterial];
 
   if (oldMat) await removeTags(tile, [oldMat]);
   await addTags(tile, [newMaterial]);
@@ -145,9 +145,9 @@ export class WallBuilderPanel extends Application {
     super();
     this._html         = null;
     this._mode         = 'build';
-    this._material     = 'stone';
-    this._heightBottom = '';
-    this._heightTop    = '';
+    this._material     = getSetting('wbDefaultMaterial') || 'stone';
+    this._heightBottom = getSetting('wbDefaultHeightBottom') ?? '';
+    this._heightTop    = getSetting('wbDefaultHeightTop')    ?? '';
     this._stable       = false;
   }
 

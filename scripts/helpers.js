@@ -1,3 +1,5 @@
+export const getSetting = (key) => game.settings.get('draw-steel-combat-tools', key);
+
 export const hasTags    = (obj, tag)  => Tagger.hasTags(obj, tag);
 export const getTags    = (obj)       => Tagger.getTags(obj);
 export const getByTag   = (tag)       => Tagger.getByTag(tag);
@@ -12,12 +14,8 @@ export const toCenter = (grid)  => ({ x: grid.x * GRID() + GRID() / 2, y: grid.y
 export const gridEq   = (a, b)  => a.x === b.x && a.y === b.y;
 export const gridDist = (a, b)  => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 
-export const MATERIAL_RULES = {
-  glass: { cost: 1, damage: 3 },
-  wood:  { cost: 3, damage: 5 },
-  stone: { cost: 6, damage: 8 },
-  metal: { cost: 9, damage: 11 },
-};
+export const MATERIAL_RULES    = () => getSetting('materialRules');
+export const WALL_RESTRICTIONS = () => getSetting('wallRestrictions');
 
 export const MATERIAL_ICONS = {
   glass:  'icons/magic/light/beam-rays-yellow-blue-small.webp',
@@ -29,15 +27,8 @@ export const MATERIAL_ICONS = {
 
 export const MATERIAL_ALPHA = { glass: 0.1, wood: 0.8, stone: 0.8, metal: 0.8 };
 
-export const WALL_RESTRICTIONS = {
-  glass: { move: 20, sight: 0,  light: 0,  sound: 0 },
-  wood:  { move: 20, sight: 10, light: 20, sound: 0 },
-  stone: { move: 20, sight: 10, light: 20, sound: 0 },
-  metal: { move: 20, sight: 10, light: 20, sound: 0 },
-};
-
 export const getMaterial = (obj) => {
-  for (const mat of Object.keys(MATERIAL_RULES)) {
+  for (const mat of Object.keys(MATERIAL_RULES())) {
     if (hasTags(obj, mat)) return mat;
   }
   return 'wood';
@@ -184,8 +175,8 @@ export const getItemRange = (item) => {
   const p = parseInt(dist.primary)   || 0;
   const s = parseInt(dist.secondary) || 0;
   const t = parseInt(dist.tertiary)  || 0;
-  if (dist.type === 'meleeRanged')              return Math.max(p, s);
-  if (dist.type === 'line')                      return p + t;
+  if (dist.type === 'meleeRanged')                  return Math.max(p, s);
+  if (dist.type === 'line')                         return p + t;
   if (dist.type === 'cube' || dist.type === 'wall') return p + s;
   return p;
 };

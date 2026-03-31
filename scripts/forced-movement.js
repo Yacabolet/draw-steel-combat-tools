@@ -8,7 +8,7 @@ import {
   hasFly, getWallBlockTileAt, getWallBlockTop, getWallBlockBottom,
   sizeRank,
   safeUpdate, safeDelete, safeCreateEmbedded, safeToggleStatusEffect,
-  replayUndo,
+  replayUndo, getSetting,
 } from './helpers.js';
 
 const parseType = (raw) => {
@@ -117,7 +117,7 @@ const breakTileFromTop = async (tile, fallDmg, undoOps, collisionMsgs, targetTok
   const tileBottom    = walls[0]?.flags?.['wall-height']?.bottom ?? 0;
   const tileTop       = walls[0]?.flags?.['wall-height']?.top    ?? 1;
   const tileHeight    = tileTop - tileBottom;
-  const costPerSquare = MATERIAL_RULES[mat]?.cost ?? 3;
+  const costPerSquare = MATERIAL_RULES()[mat]?.cost ?? 3;
   const squaresBroken = Math.min(Math.floor(fallDmg / costPerSquare), tileHeight);
 
   if (squaresBroken === 0) return tileTop - 1;
@@ -134,7 +134,7 @@ const breakTileFromTop = async (tile, fallDmg, undoOps, collisionMsgs, targetTok
     await safeUpdate(tile.document, { 'texture.src': MATERIAL_ICONS.broken, alpha: 0.8 });
     if (game.user.isGM) await addTags(tile, ['broken']);
 
-    const restrict = WALL_RESTRICTIONS[mat] ?? WALL_RESTRICTIONS.stone;
+    const restrict = WALL_RESTRICTIONS()[mat] ?? WALL_RESTRICTIONS().stone;
     for (const w of walls) {
       undoOps.push({ op: 'update', uuid: w.uuid, data: { ...restrict, 'flags.wall-height.top': tileTop, 'flags.wall-height.bottom': tileBottom } });
       undoOps.push({ op: 'removeTags', uuid: w.uuid, tags: ['broken'] });
@@ -173,7 +173,7 @@ const splitTileAtElevation = async (tile, splitElev, undoOps, collisionMsgs) => 
   const walls      = getByTag(blockTag).filter(o => Array.isArray(o.c));
   const tileBottom = walls[0]?.flags?.['wall-height']?.bottom ?? 0;
   const tileTop    = walls[0]?.flags?.['wall-height']?.top    ?? 1;
-  const restrict   = WALL_RESTRICTIONS[mat] ?? WALL_RESTRICTIONS.stone;
+  const restrict   = WALL_RESTRICTIONS()[mat] ?? WALL_RESTRICTIONS().stone;
 
   if (splitElev <= tileBottom || splitElev >= tileTop) return;
 
@@ -265,7 +265,7 @@ const applyFallDamage = async (targetToken, finalElev, landingGrid, agility, can
     }
 
     if (effectiveFall >= 2) {
-      const fallDmg = Math.min(effectiveFall * 2, 50);
+      const fallDmg = Math.min(effectiveFall * 2, getSetting('fallDamageCap'));
       await applyDamage(targetToken.actor, fallDmg);
 
       const reductionNote = fallReduction > 0
@@ -593,7 +593,7 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
           }
 
           const mat  = getMaterial(wall);
-          const rule = MATERIAL_RULES[mat];
+          const rule = MATERIAL_RULES()[mat];
           const dmg  = remaining < rule.cost ? 2 + remaining + bonusObjectDmg : rule.damage + bonusObjectDmg;
           if (!noCollisionDamage) await applyDamage(targetToken.actor, dmg);
 
@@ -700,7 +700,7 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
           }
 
           const mat  = getMaterial(tile);
-          const rule = MATERIAL_RULES[mat];
+          const rule = MATERIAL_RULES()[mat];
           const dmg  = remaining < rule.cost ? 2 + remaining + bonusObjectDmg : rule.damage + bonusObjectDmg;
           if (!noCollisionDamage) await applyDamage(targetToken.actor, dmg);
 
@@ -747,7 +747,7 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
         ? startElev + Math.round(reducedVert * (s + 1) / reduced)
         : startElev;
       await safeUpdate(targetToken.document, { x: stepWorld.x, y: stepWorld.y, elevation: stepElev });
-      await new Promise(r => setTimeout(r, 80));
+      await new Promise(r => setTimeout(r, getSetting('animationStepDelay')));
     }
     const finalElev = isVertical && reduced > 0
       ? startElev + Math.round(reducedVert * (landingStepIndex + 1) / reduced)
@@ -855,7 +855,7 @@ export async function runForcedMovement(macroArgs = []) {
     const { target, source } = getTargetAndSource();
     if (!target) { ui.notifications.warn('Target or select the creature to move.'); return; }
 
-    if (range > 0 && !game.user.isGM && source) {
+    if (range > 0 && !(game.user.isGM && getSetting('gmBypassesRangeCheck')) && source) {
       const hDist   = canvas.grid.measurePath([
         { x: source.center.x, y: source.center.y },
         { x: target.center.x, y: target.center.y },
