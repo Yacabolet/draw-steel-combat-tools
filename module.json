@@ -54,7 +54,6 @@
     "scripts/helpers.js",
     "scripts/forced-movement.js",
     "scripts/wall-builder.js",
-    "scripts/knockback.js",
     "scripts/chat-hooks.js",
     "scripts/main.js"
   ]
