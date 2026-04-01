@@ -1,4 +1,5 @@
 import { runForcedMovement } from './forced-movement.js';
+import { runGrab } from './grab.js';
 import { canForcedMoveTarget, getItemRange, getItemDsid, getSetting } from './helpers.js';
 
 const getForcedEffects = (item, tier) => {
@@ -24,7 +25,25 @@ const getForcedEffects = (item, tier) => {
   return results;
 };
 
-const injectButtons = (msg, el) => {
+const hasGrabEffect = (item, tier) => {
+  const dsid = item.system?._dsid ?? item.toObject().system?._dsid;
+  if (dsid === 'grab') return tier >= 2;
+
+  const effectsCollection = item.system?.power?.effects;
+  const effects = effectsCollection?.contents ?? Object.values(effectsCollection ?? {});
+  for (const effect of effects) {
+    const tierData = effect[effect.type]?.[`tier${tier}`] ?? effect[`tier${tier}`];
+    if (!tierData) continue;
+    const conditions = tierData.conditions ?? tierData.statuses ?? tierData.status ?? [];
+    const arr = Array.isArray(conditions) ? conditions
+              : conditions instanceof Set ? [...conditions]
+              : Object.values(conditions ?? {});
+    if (arr.some(c => String(c?.id ?? c?.name ?? c).toLowerCase() === 'grabbed')) return true;
+  }
+  return false;
+};
+
+const injectForcedButtons = (msg, el) => {
   const data = msg.getFlag('draw-steel-combat-tools', 'forcedMovement');
   if (!data) return;
   if (el.querySelector('.dsct-forced-buttons')) return;
@@ -76,39 +95,97 @@ const injectButtons = (msg, el) => {
   target.appendChild(container);
 };
 
+const injectGrabButton = (msg, el) => {
+  const data = msg.getFlag('draw-steel-combat-tools', 'grab');
+  if (!data) return;
+
+  // Find DS native grabbed buttons to replace
+  // DS likely renders buttons that apply the grabbed status — search broadly
+  const allButtons = [...el.querySelectorAll('button, a')];
+  const grabBtns   = allButtons.filter(btn => {
+    if (btn.classList.contains('dsct-grab-btn')) return false;
+    const text    = btn.textContent.trim().toLowerCase();
+    const attrStr = [...btn.attributes].map(a => `${a.name}=${a.value}`).join(' ').toLowerCase();
+    return text === 'grabbed'
+        || text === 'apply grabbed'
+        || text === 'grab'
+        || (attrStr.includes('grabbed') && (btn.dataset.action || btn.dataset.statusId || btn.dataset.effect));
+  });
+
+  for (const btn of grabBtns) {
+    const newBtn = document.createElement('button');
+    newBtn.type      = 'button';
+    newBtn.className = 'dsct-grab-btn';
+    newBtn.innerHTML = btn.innerHTML || '<i class="fa-solid fa-hand"></i> Apply Grab';
+    newBtn.style.cssText = btn.style.cssText || 'cursor:pointer;';
+
+    newBtn.addEventListener('click', async () => {
+      const api = game.modules.get('draw-steel-combat-tools')?.api;
+      if (!api) { ui.notifications.error('Draw Steel: Combat Tools not active.'); return; }
+
+      const targets    = [...game.user.targets];
+      const controlled = canvas.tokens.controlled;
+      const speakerTok = data.speakerToken ? canvas?.tokens?.get(data.speakerToken) : null;
+
+      const grabber = controlled.length === 1 ? controlled[0] : speakerTok;
+      const grabbed = targets.length   === 1 ? targets[0]    : null;
+
+      if (!grabber) { ui.notifications.warn('Control the grabber token or ensure the ability speaker token is on the canvas.'); return; }
+      if (!grabbed) { ui.notifications.warn('Target the creature to be grabbed.'); return; }
+
+      await api.grab(grabber, grabbed, { tier: data.tier });
+    });
+
+    btn.replaceWith(newBtn);
+  }
+};
+
 export function registerChatHooks() {
   const trySetFlag = async (msg) => {
     if (msg.author.id !== game.user.id) return;
-    if (msg.getFlag('draw-steel-combat-tools', 'forcedMovement')) return;
 
     const parts         = msg.system?.parts?.contents ?? Object.values(msg.system?.parts ?? {});
     const abilityUse    = parts.find(p => p.type === 'abilityUse');
     const abilityResult = parts.find(p => p.type === 'abilityResult');
-
     if (!abilityUse?.abilityUuid || !abilityResult?.tier) return;
 
     const item = await fromUuid(abilityUse.abilityUuid);
     if (!item) return;
 
-    const forced = getForcedEffects(item, abilityResult.tier);
-    if (!forced.length) return;
+    const dsid = getItemDsid(item);
+    const tier = abilityResult.tier;
 
-    const range = getItemRange(item);
-    const dsid  = getItemDsid(item);
+    if (!msg.getFlag('draw-steel-combat-tools', 'forcedMovement')) {
+      const forced = getForcedEffects(item, tier);
+      if (forced.length) {
+        const range = getItemRange(item);
+        await msg.setFlag('draw-steel-combat-tools', 'forcedMovement', {
+          effects:      forced,
+          keywords:     Array.from(item.system?.keywords ?? []),
+          range,
+          dsid,
+          speakerToken: msg.speaker?.token ?? null,
+        });
+      }
+    }
 
-    await msg.setFlag('draw-steel-combat-tools', 'forcedMovement', {
-      effects:      forced,
-      keywords:     Array.from(item.system?.keywords ?? []),
-      range,
-      dsid,
-      speakerToken: msg.speaker?.token ?? null,
-    });
+    if (!msg.getFlag('draw-steel-combat-tools', 'grab')) {
+      if (hasGrabEffect(item, tier)) {
+        await msg.setFlag('draw-steel-combat-tools', 'grab', {
+          speakerToken: msg.speaker?.token ?? null,
+          tier,
+          dsid,
+        });
+      }
+    }
   };
 
   const tryInject = (msg) => {
     setTimeout(() => {
       const liveEl = document.querySelector(`[data-message-id="${msg.id}"]`);
-      if (liveEl) injectButtons(msg, liveEl);
+      if (!liveEl) return;
+      injectForcedButtons(msg, liveEl);
+      injectGrabButton(msg, liveEl);
     }, getSetting('chatInjectDelay'));
   };
 

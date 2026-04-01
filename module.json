@@ -2,7 +2,7 @@
   "id": "draw-steel-combat-tools",
   "title": "Draw Steel: Combat Tools",
   "description": "<p>Draw Steel combat automation tools.</p>",
-  "version": "1.1.1",
+  "version": "1.2.5",
   "socket": true,
   "compatibility": { "minimum": "13", "verified": "13" },
   "authors": [{ "name": "Ady", "discord": "AdyGenie", "flags": {} }],
@@ -20,8 +20,13 @@
     "scripts/helpers.js",
     "scripts/wall-builder-settings.js",
     "scripts/forced-movement.js",
+    "scripts/grab.js",
     "scripts/wall-builder.js",
     "scripts/chat-hooks.js",
+    "scripts/tactical-effects.js",
+    "scripts/death-tracker.js",
+    "scripts/squad-labels.js",
+    "scripts/triggered-actions.js",
     "scripts/main.js"
   ]
 }
