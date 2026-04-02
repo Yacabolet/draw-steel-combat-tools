@@ -100,9 +100,9 @@ export const replayUndo = async (ops) => {
   }
 };
 
-export const safeUpdate = async (document, data) => {
-  if (document.isOwner) return await document.update(data);
-  return await getSocket().executeAsGM('updateDocument', document.uuid, data);
+export const safeUpdate = async (document, data, options = {}) => {
+  if (document.isOwner) return await document.update(data, options);
+  return await getSocket().executeAsGM('updateDocument', document.uuid, data, options);
 };
 
 export const safeDelete = async (document) => {
@@ -202,4 +202,34 @@ export const getWallBlockBottom = (tile) => {
 export const getWallBlockTop = (tile) => {
   const { walls } = getWallBlockWalls(tile);
   return walls[0]?.flags?.['wall-height']?.top ?? null;
+};
+
+export const safeTeleport = async (tokenDoc, targetX, targetY) => {
+  const actor = tokenDoc.actor;
+  if (!actor) {
+    // Pass both flags to guarantee an unconstrained, instant move!
+    await safeUpdate(tokenDoc, { x: targetX, y: targetY }, { animate: false, teleport: true });
+    return;
+  }
+
+  const [teleportEffect] = await safeCreateEmbedded(actor, 'ActiveEffect', [{
+    name: "DSCT System Teleport",
+    img: "icons/magic/movement/abstract-ribbons-red-orange.webp",
+    type: "base",
+    changes: [{ key: "system.movement.types", mode: 5, value: "teleport", priority: null }],
+    disabled: false, transfer: false,
+    flags: { 'draw-steel-combat-tools': { isTempTeleport: true } },
+    system: { end: { type: "", roll: "" } }
+  }]);
+
+  await new Promise(r => setTimeout(r, 50));
+
+  // Pass both flags here as well!
+  await safeUpdate(tokenDoc, { x: targetX, y: targetY }, { animate: false, teleport: true });
+
+  await new Promise(r => setTimeout(r, 50));
+
+  if (teleportEffect && actor.effects.has(teleportEffect.id)) {
+    await safeDelete(teleportEffect);
+  }
 };

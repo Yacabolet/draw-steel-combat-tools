@@ -5,12 +5,12 @@ import { registerChatHooks, refreshChatInjections } from './chat-hooks.js';
 import { runGrab, toggleGrabPanel, endGrab, registerGrabHooks } from './grab.js';
 import { replayUndo } from './helpers.js';
 import { applyJudgement, applyMark, registerTacticalHooks } from './tactical-effects.js';
-import { registerDeathTrackerHooks } from './death-tracker.js';
+import { registerDeathTrackerHooks, runReviveUI, runPowerWordKillUI } from './death-tracker.js';
 import { applySquadLabels, autoRenameGroups, registerSquadLabelHooks } from './squad-labels.js';
 import { applyTriggeredActions, registerTriggeredActionHooks } from './triggered-actions.js';
 import { registerModuleButtons } from './module-buttons.js';
 
-const MAIN_VERSION = "v1.3.1 - Persistent Grabs";
+const MAIN_VERSION = "v1.3.4 - Configurable Revive";
 console.log(`🔴 DSCT DEBUG | Loaded main.js - Version: ${MAIN_VERSION}`);
 
 const api = {
@@ -23,6 +23,8 @@ const api = {
   },
   grabPanel: toggleGrabPanel,
   endGrab: endGrab,
+  revive: runReviveUI,
+  powerWordKill: runPowerWordKillUI,
   judgement: applyJudgement,
   mark: applyMark,
   squadLabels: applySquadLabels,
@@ -94,6 +96,11 @@ Hooks.once('init', () => {
     scope: 'world', config: true, type: Boolean, default: false
   });
 
+  game.settings.register('draw-steel-combat-tools', 'clearEffectsOnRevive', {
+    name: 'Clear Effects on Revive', hint: 'If enabled, reviving a creature will automatically remove all of their active conditions and effects (except core system states like Winded).',
+    scope: 'world', config: true, type: Boolean, default: false
+  });
+
   game.settings.register('draw-steel-combat-tools', 'deathTrackerSkullIds', {
     scope: 'world', config: false, type: Array, default: []
   });
@@ -121,7 +128,7 @@ Hooks.once('init', () => {
   });
 
   registerChatHooks();
-  registerGrabHooks(); // <--- This triggers the canvas rehydration!
+  registerGrabHooks(); 
   registerTacticalHooks();
   registerDeathTrackerHooks();
   registerSquadLabelHooks();
@@ -143,7 +150,7 @@ Hooks.once('socketlib.ready', () => {
     window._forcedMovementUndo = async () => { await replayUndo(undoLog); ui.notifications.info('Forced movement undone.'); };
   });
 
-  socket.register('updateDocument', async (uuid, data) => { const doc = await fromUuid(uuid); if (doc) return await doc.update(data); });
+  socket.register('updateDocument', async (uuid, data, options = {}) => { const doc = await fromUuid(uuid); if (doc) return await doc.update(data, options); });
   socket.register('deleteDocument', async (uuid) => { const doc = await fromUuid(uuid); if (doc) return await doc.delete(); });
   socket.register('createEmbedded', async (parentUuid, type, data) => { const parent = await fromUuid(parentUuid); if (parent) return await parent.createEmbeddedDocuments(type, data); });
   socket.register('toggleStatusEffect', async (uuid, effectId, options) => { const actor = await fromUuid(uuid); if (actor) return await actor.toggleStatusEffect(effectId, options); });

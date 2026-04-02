@@ -26,6 +26,15 @@ export const registerModuleButtons = () => {
         visible: game.user.isGM,
         onClick: () => getApi()?.wallBuilder(),
         onChange: () => getApi()?.wallBuilder()
+      },
+      'dsct-pwk': {
+        name: 'dsct-pwk',
+        title: 'Power Word: Kill',
+        icon: 'fas fa-skull',
+        button: true,
+        visible: game.user.isGM,
+        onClick: () => getApi()?.powerWordKill(),
+        onChange: () => getApi()?.powerWordKill()
       }
     };
 
