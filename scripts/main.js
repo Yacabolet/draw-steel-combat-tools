@@ -2,7 +2,7 @@ import { runForcedMovement } from './forced-movement.js';
 import { WallBuilderPanel } from './wall-builder.js';
 import { WallBuilderSettingsMenu, MATERIAL_RULE_DEFAULTS, WALL_RESTRICTION_DEFAULTS } from './wall-builder-settings.js';
 import { registerChatHooks, refreshChatInjections } from './chat-hooks.js';
-import { runGrab, toggleGrabPanel } from './grab.js';
+import { runGrab, toggleGrabPanel, endGrab, registerGrabHooks } from './grab.js';
 import { replayUndo } from './helpers.js';
 import { applyJudgement, applyMark, registerTacticalHooks } from './tactical-effects.js';
 import { registerDeathTrackerHooks } from './death-tracker.js';
@@ -10,7 +10,7 @@ import { applySquadLabels, autoRenameGroups, registerSquadLabelHooks } from './s
 import { applyTriggeredActions, registerTriggeredActionHooks } from './triggered-actions.js';
 import { registerModuleButtons } from './module-buttons.js';
 
-const MAIN_VERSION = "v1.2.9 - Safe Grabs";
+const MAIN_VERSION = "v1.3.1 - Persistent Grabs";
 console.log(`🔴 DSCT DEBUG | Loaded main.js - Version: ${MAIN_VERSION}`);
 
 const api = {
@@ -22,6 +22,7 @@ const api = {
     else new WallBuilderPanel().render(true);
   },
   grabPanel: toggleGrabPanel,
+  endGrab: endGrab,
   judgement: applyJudgement,
   mark: applyMark,
   squadLabels: applySquadLabels,
@@ -120,6 +121,7 @@ Hooks.once('init', () => {
   });
 
   registerChatHooks();
+  registerGrabHooks(); // <--- This triggers the canvas rehydration!
   registerTacticalHooks();
   registerDeathTrackerHooks();
   registerSquadLabelHooks();

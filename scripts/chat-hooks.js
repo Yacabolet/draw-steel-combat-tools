@@ -1,5 +1,5 @@
 import { runForcedMovement } from './forced-movement.js';
-import { runGrab } from './grab.js';
+import { runGrab, buildFreeStrikeButton } from './grab.js';
 import { canForcedMoveTarget, getItemRange, getItemDsid, getSetting } from './helpers.js';
 
 const getForcedEffects = (item, tier) => {
@@ -104,13 +104,11 @@ const injectGrabButton = (msg, el) => {
   if (!nativeBtns.length) return;
 
   for (const btn of nativeBtns) {
-    // Create our replacement button
     const newBtn = document.createElement('button');
     newBtn.type = 'button';
-    newBtn.className = 'dsct-grab-btn';
-    // Use a slightly different icon and text so you know it successfully hijacked!
+    newBtn.className = btn.className ? `${btn.className} dsct-grab-btn` : 'dsct-grab-btn';
     newBtn.innerHTML = '<i class="fa-solid fa-hand-rock"></i> Execute Grab';
-    newBtn.style.cssText = btn.style.cssText || 'cursor:pointer; background: rgba(122, 80, 192, 0.2); border: 1px solid #7a50c0; color: var(--color-text-dark-primary);';
+    newBtn.style.cssText = 'cursor:pointer;';
 
     newBtn.addEventListener('click', async (e) => {
       e.preventDefault();
@@ -122,22 +120,136 @@ const injectGrabButton = (msg, el) => {
       const targets    = [...game.user.targets];
       const controlled = canvas.tokens.controlled;
       
-      // Get the token of whoever rolled the ability from the chat message
       const speakerTok = data.speakerToken ? canvas?.tokens?.get(data.speakerToken) : null;
-
-      // If the user has exactly 1 token controlled, use that. Otherwise fallback to the chat speaker.
       const grabber = controlled.length === 1 ? controlled[0] : speakerTok;
-      const grabbed = targets.length === 1 ? targets[0] : null;
+      
+      let grabbed = targets.length === 1 ? targets[0] : null;
+
+      // Parse the header for target logic if they didn't manually click a target
+      if (!grabbed) {
+        const targetHeaders = el.querySelectorAll('.dice-roll .header[data-uuid]');
+        if (targetHeaders.length === 1) {
+          const uuid = targetHeaders[0].dataset.uuid;
+          const parts = uuid.split('.');
+          const tokenIdx = parts.indexOf('Token');
+          
+          if (tokenIdx !== -1) {
+            const tokenId = parts[tokenIdx + 1];
+            grabbed = canvas.tokens.get(tokenId) || canvas.tokens.placeables.find(t => t.id === tokenId);
+          } else {
+            const actorIdx = parts.indexOf('Actor');
+            const actorId = actorIdx !== -1 ? parts[actorIdx + 1] : parts[parts.length - 1];
+            grabbed = canvas.tokens.placeables.find(t => t.actor?.id === actorId);
+          }
+        }
+      }
 
       if (!grabber) { ui.notifications.warn('Control the grabber token or ensure the ability speaker token is on the canvas.'); return; }
       if (!grabbed) { ui.notifications.warn('Target the creature to be grabbed.'); return; }
 
-      // Fire off the API method (which natively handles the Tier logic and spawns the UI if Tier 2)
       await api.grab(grabber, grabbed, { tier: data.tier });
     });
 
-    // Replace the native button with our new one
     btn.replaceWith(newBtn);
+  }
+};
+
+const injectGrabResolutions = (msg, el) => {
+  // 1. TIER 2 GRAB RESOLUTION
+  const grabActions = el.querySelector('.dsct-tier2-grab-actions');
+  if (grabActions && !grabActions.dataset.bound) {
+    grabActions.dataset.bound = "true";
+    const confirmBtn = grabActions.querySelector('[data-action="dsct-confirm-grab"]');
+    const cancelBtn = grabActions.querySelector('[data-action="dsct-cancel-grab"]');
+    
+    confirmBtn?.addEventListener('click', async (e) => {
+        e.preventDefault();
+        const api = game.modules.get('draw-steel-combat-tools')?.api;
+        const grabber = canvas.tokens.get(grabActions.dataset.grabberId) || canvas.tokens.placeables.find(t=>t.id===grabActions.dataset.grabberId);
+        const target = canvas.tokens.get(grabActions.dataset.targetId) || canvas.tokens.placeables.find(t=>t.id===grabActions.dataset.targetId);
+        if (grabber && target) await api?.grab(grabber, target, { forceApply: true });
+        
+        // Permanently modify the chat message HTML in the database
+        const newContent = msg.content.replace(/<div[^>]*class="dsct-tier2-grab-actions"[^>]*>.*?<\/div>/s, '<div style="margin-top:6px;"><em>Grab Confirmed</em></div>');
+        if (msg.isOwner || game.user.isGM) await msg.update({ content: newContent });
+        else grabActions.innerHTML = '<em>Grab Confirmed</em>';
+        
+        const panel = Object.values(ui.windows).find(w => w.id === 'grab-panel');
+        if (panel) { panel._pendingConfirm = null; panel._refreshPanel(); }
+    });
+    
+    cancelBtn?.addEventListener('click', async (e) => {
+        e.preventDefault();
+        const newContent = msg.content.replace(/<div[^>]*class="dsct-tier2-grab-actions"[^>]*>.*?<\/div>/s, '<div style="margin-top:6px;"><em>Grab Cancelled</em></div>');
+        if (msg.isOwner || game.user.isGM) await msg.update({ content: newContent });
+        else grabActions.innerHTML = '<em>Grab Cancelled</em>';
+        
+        const panel = Object.values(ui.windows).find(w => w.id === 'grab-panel');
+        if (panel) { panel._pendingConfirm = null; panel._refreshPanel(); }
+    });
+  }
+
+  // 2. TIER 2 ESCAPE GRAB RESOLUTION
+  const escapeData = msg.getFlag('draw-steel-combat-tools', 'escapeGrab');
+  if (escapeData && escapeData.tier === 2) {
+    if (el.querySelector('.dsct-escape-actions')) return; 
+    
+    const targetArea = el.querySelector('.message-part-buttons') || el.querySelector('.message-content') || el;
+    const resolvedState = msg.getFlag('draw-steel-combat-tools', 'escapeResolved');
+
+    const container = document.createElement('div');
+    container.className = 'dsct-escape-actions';
+
+    // If already resolved in the database, just show the text and stop!
+    if (resolvedState) {
+      container.innerHTML = `<div style="margin-top:8px; font-size: 13px; border-top: 1px solid var(--color-border-light-primary); padding-top: 8px;"><em>${resolvedState === 'accepted' ? 'Escape Accepted' : 'Stayed Grabbed'}</em></div>`;
+      targetArea.appendChild(container);
+      return;
+    }
+
+    const grab = window._activeGrabs?.get(escapeData.speakerToken);
+    if (!grab) return;
+
+    const grabberTok = canvas.tokens.get(grab.grabberTokenId) || canvas.tokens.placeables.find(t=>t.id===grab.grabberTokenId);
+    const fsHtml = grabberTok ? buildFreeStrikeButton(grabberTok.actor) : '';
+    
+    container.innerHTML = `
+      <div style="margin-top:8px; font-size: 13px; border-top: 1px solid var(--color-border-light-primary); padding-top: 8px;">
+          <strong>${grab.grabberName}</strong> may make a free strike:<br>
+          <div style="margin: 4px 0;">${fsHtml}</div>
+          <div style="display:flex;gap:4px;margin-top:4px;">
+            <button type="button" class="apply-effect dsct-accept-escape" style="cursor:pointer;flex:1;"><i class="fa-solid fa-check"></i> Accept Escape</button>
+            <button type="button" class="apply-effect dsct-deny-escape" style="cursor:pointer;flex:1;border-color:var(--color-text-error);color:var(--color-text-error);"><i class="fa-solid fa-times"></i> Stay Grabbed</button>
+          </div>
+      </div>
+    `;
+    
+    container.querySelector('.dsct-accept-escape').addEventListener('click', async (e) => {
+        e.preventDefault();
+        const api = game.modules.get('draw-steel-combat-tools')?.api;
+        await api?.endGrab(escapeData.speakerToken, { silent: true });
+        ChatMessage.create({ content: `<strong>Escape Grab:</strong> ${grab.grabbedName} escapes after taking a free strike.` });
+        
+        // Permanently set the flag in the database
+        if (msg.isOwner || game.user.isGM) await msg.setFlag('draw-steel-combat-tools', 'escapeResolved', 'accepted');
+        else container.innerHTML = '<em>Escape Accepted</em>';
+        
+        const panel = Object.values(ui.windows).find(w => w.id === 'grab-panel');
+        if (panel) { panel._pendingEscape = null; panel._refreshPanel(); }
+    });
+    
+    container.querySelector('.dsct-deny-escape').addEventListener('click', async (e) => {
+        e.preventDefault();
+        ChatMessage.create({ content: `<strong>Escape Grab:</strong> ${grab.grabbedName} stays grabbed.` });
+        
+        if (msg.isOwner || game.user.isGM) await msg.setFlag('draw-steel-combat-tools', 'escapeResolved', 'denied');
+        else container.innerHTML = '<em>Stayed Grabbed</em>';
+        
+        const panel = Object.values(ui.windows).find(w => w.id === 'grab-panel');
+        if (panel) { panel._pendingEscape = null; panel._refreshPanel(); }
+    });
+    
+    targetArea.appendChild(container);
   }
 };
 
@@ -179,6 +291,39 @@ export function registerChatHooks() {
         });
       }
     }
+
+    // NEW LOGIC: Track the global "Escape Grab" manuever
+    if (!msg.getFlag('draw-steel-combat-tools', 'escapeGrab')) {
+      if (dsid === 'escape-grab' || item.name.toLowerCase().includes('escape grab')) {
+        const grabbedTokenId = msg.speaker?.token;
+        if (grabbedTokenId && window._activeGrabs?.has(grabbedTokenId)) {
+          await msg.setFlag('draw-steel-combat-tools', 'escapeGrab', {
+            speakerToken: grabbedTokenId,
+            tier
+          });
+
+          // Auto-resolve Tier 1 and 3 without injecting any buttons
+          const grab = window._activeGrabs.get(grabbedTokenId);
+          if (tier >= 3) {
+            const api = game.modules.get('draw-steel-combat-tools')?.api;
+            if (api) {
+               await api.endGrab(grabbedTokenId, { silent: true });
+               ChatMessage.create({ content: `<strong>Escape Grab:</strong> ${grab.grabbedName} breaks free from ${grab.grabberName}!` });
+            }
+          } else if (tier === 1) {
+            ChatMessage.create({ content: `<strong>Escape Grab:</strong> ${grab.grabbedName} fails to escape.` });
+          } else if (tier === 2) {
+             // For Tier 2, just sync the panel UI. tryInject() will handle building the chat buttons!
+             const panel = Object.values(ui.windows).find(w => w.id === 'grab-panel');
+             if (panel) {
+                 panel._pendingEscape = { grabbedTokenId };
+                 panel._refreshPanel();
+             }
+          }
+        }
+      }
+    }
+
   };
 
   const tryInject = (msg) => {
@@ -187,6 +332,7 @@ export function registerChatHooks() {
       if (!liveEl) return;
       injectForcedButtons(msg, liveEl);
       injectGrabButton(msg, liveEl);
+      injectGrabResolutions(msg, liveEl);
     }, getSetting('chatInjectDelay'));
   };
 

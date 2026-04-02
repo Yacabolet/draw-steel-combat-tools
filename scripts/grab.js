@@ -7,7 +7,7 @@ const s          = n => Math.round(n * SCALE);
 const sizeRankG = (size) =>
   size.value >= 2 ? size.value + 2 : ({ T: 0, S: 1, M: 2, L: 3 })[size.letter] ?? 2;
 
-const buildFreeStrikeButton = (actor) => {
+export const buildFreeStrikeButton = (actor) => {
   const item = actor?.items.find(i => i.name.toLowerCase().includes('melee free strike'));
   if (item) return `<a onclick="ds.helpers.macros.rollItemMacro('${item.uuid}')" style="cursor:pointer;">Melee Free Strike</a>`;
   const dmg = actor?.system.monster?.freeStrike;
@@ -31,42 +31,8 @@ const refreshOpenPanel = () => {
   if (panel) panel._refreshPanel();
 };
 
-export const applyGrab = async (grabberTok, grabbedTok) => {
-  if (!window._activeGrabs) window._activeGrabs = new Map();
-  if (window._activeGrabs.has(grabbedTok.id)) await endGrab(grabbedTok.id, { silent: true });
-
-  await safeCreateEmbedded(grabbedTok.actor, 'ActiveEffect', [{
-    name: 'Grabbed',
-    img: 'icons/skills/melee/unarmed-punch-fist-yellow-red.webp',
-    type: 'base',
-    statuses: ['grabbed'],
-    changes: [],
-    system: { end: { type: 'encounter', roll: '1d10 + @combat.save.bonus' } },
-    disabled: false, transfer: false, flags: {},
-    duration: { startTime: 0, combat: null, seconds: null, rounds: null, turns: null, startRound: 0, startTurn: 0 },
-    tint: '#ffffff', sort: 0,
-  }]);
-
-  const [grabberEffect] = await safeCreateEmbedded(grabberTok.actor, 'ActiveEffect', [{
-    name: 'Grabber',
-    img: 'icons/magic/control/debuff-chains-shackle-movement-red.webp',
-    type: 'base',
-    system: { end: { type: 'encounter', roll: '' }, filters: { keywords: [] } },
-    changes: [], disabled: false, transfer: false, statuses: [], flags: {},
-    duration: { startTime: 0, combat: null, seconds: null, rounds: null, turns: null, startRound: null, startTurn: null },
-    description: '', tint: '#ffffff', sort: 0,
-    origin: `macro.grab.${grabberTok.id}.${grabbedTok.id}`,
-  }]);
-
-  const grabbedEffect = grabbedTok.actor.effects.find(e => [...(e.statuses ?? [])].includes('grabbed'));
-
-  window._activeGrabs.set(grabbedTok.id, {
-    grabbedTokenId:  grabbedTok.id,  grabbedActorId:  grabbedTok.actor.id,  grabbedName:  grabbedTok.name,
-    grabberTokenId:  grabberTok.id,  grabberActorId:  grabberTok.actor.id,  grabberName:  grabberTok.name,
-    grabberEffectId: grabberEffect?.id ?? null,
-    grabbedEffectId: grabbedEffect?.id ?? null,
-  });
-
+// --- NEW HOOK MANAGEMENT ---
+const ensureGrabHooks = () => {
   if (!window._grabFollowActive)  window._grabFollowActive  = new Set();
   if (!window._grabRepositioning) window._grabRepositioning = new Set();
 
@@ -108,7 +74,110 @@ export const applyGrab = async (grabberTok, grabbedTok) => {
       }
     });
   }
+};
 
+const removeGrabHooks = () => {
+  if (window._grabPreHook)        { Hooks.off('preUpdateToken',     window._grabPreHook);        window._grabPreHook        = null; }
+  if (window._grabFollowHook)     { Hooks.off('updateToken',        window._grabFollowHook);     window._grabFollowHook     = null; }
+  if (window._grabberGrabbedHook) { Hooks.off('createActiveEffect', window._grabberGrabbedHook); window._grabberGrabbedHook = null; }
+  if (window._grabRepositionHook) { Hooks.off('updateToken',        window._grabRepositionHook); window._grabRepositionHook = null; }
+  window._grabFollowActive  = new Set();
+  window._grabRepositioning = new Set();
+};
+
+// --- NEW REHYDRATION LOGIC ---
+const rehydrateGrabs = () => {
+  window._activeGrabs = new Map();
+  if (!canvas?.tokens?.placeables) return;
+
+  for (const token of canvas.tokens.placeables) {
+    if (!token.actor) continue;
+    const grabberEffects = token.actor.effects.filter(e => e.name === 'Grabber' && e.origin?.startsWith('macro.grab.'));
+    
+    for (const effect of grabberEffects) {
+      const parts = effect.origin.split('.');
+      if (parts.length !== 4) continue;
+      
+      const grabberId = parts[2];
+      const grabbedId = parts[3];
+
+      const grabberTok = canvas.tokens.get(grabberId);
+      const grabbedTok = canvas.tokens.get(grabbedId);
+
+      if (!grabberTok || !grabbedTok) continue;
+
+      const grabbedEffect = grabbedTok.actor.effects.find(e => [...(e.statuses ?? [])].includes('grabbed'));
+
+      window._activeGrabs.set(grabbedId, {
+        grabbedTokenId:  grabbedId,  
+        grabbedActorId:  grabbedTok.actor.id,  
+        grabbedName:  grabbedTok.name,
+        grabberTokenId:  grabberId,  
+        grabberActorId:  grabberTok.actor.id,  
+        grabberName:  grabberTok.name,
+        grabberEffectId: effect.id,
+        grabbedEffectId: grabbedEffect?.id ?? null,
+        offsetX: grabbedTok.document.x - grabberTok.document.x,
+        offsetY: grabbedTok.document.y - grabberTok.document.y
+      });
+    }
+  }
+
+  if (window._activeGrabs.size > 0) {
+    ensureGrabHooks();
+    refreshOpenPanel();
+    // Force the chat to re-render 1/4th of a second after the canvas loads
+    // so any pending Tier 2 escapes can successfully find the active grabs!
+    setTimeout(() => { ui.chat?.render(true); }, 250);
+  }
+};
+
+export const registerGrabHooks = () => {
+  // Wait for the canvas to be ready so we have tokens to check
+  Hooks.on('canvasReady', rehydrateGrabs);
+};
+// -----------------------------
+
+
+export const applyGrab = async (grabberTok, grabbedTok) => {
+  if (!window._activeGrabs) window._activeGrabs = new Map();
+  if (window._activeGrabs.has(grabbedTok.id)) await endGrab(grabbedTok.id, { silent: true });
+
+  await safeCreateEmbedded(grabbedTok.actor, 'ActiveEffect', [{
+    name: 'Grabbed',
+    img: 'icons/skills/melee/unarmed-punch-fist-yellow-red.webp',
+    type: 'base',
+    statuses: ['grabbed'],
+    changes: [],
+    system: { end: { type: 'encounter', roll: '1d10 + @combat.save.bonus' } },
+    disabled: false, transfer: false, flags: {},
+    duration: { startTime: 0, combat: null, seconds: null, rounds: null, turns: null, startRound: 0, startTurn: 0 },
+    tint: '#ffffff', sort: 0,
+  }]);
+
+  const [grabberEffect] = await safeCreateEmbedded(grabberTok.actor, 'ActiveEffect', [{
+    name: 'Grabber',
+    img: 'icons/magic/control/debuff-chains-shackle-movement-red.webp',
+    type: 'base',
+    system: { end: { type: 'encounter', roll: '' }, filters: { keywords: [] } },
+    changes: [], disabled: false, transfer: false, statuses: [], flags: {},
+    duration: { startTime: 0, combat: null, seconds: null, rounds: null, turns: null, startRound: null, startTurn: null },
+    description: '', tint: '#ffffff', sort: 0,
+    origin: `macro.grab.${grabberTok.id}.${grabbedTok.id}`,
+  }]);
+
+  const grabbedEffect = grabbedTok.actor.effects.find(e => [...(e.statuses ?? [])].includes('grabbed'));
+
+  window._activeGrabs.set(grabbedTok.id, {
+    grabbedTokenId:  grabbedTok.id,  grabbedActorId:  grabbedTok.actor.id,  grabbedName:  grabbedTok.name,
+    grabberTokenId:  grabberTok.id,  grabberActorId:  grabberTok.actor.id,  grabberName:  grabberTok.name,
+    grabberEffectId: grabberEffect?.id ?? null,
+    grabbedEffectId: grabbedEffect?.id ?? null,
+    offsetX: grabbedTok.document.x - grabberTok.document.x,
+    offsetY: grabbedTok.document.y - grabberTok.document.y
+  });
+
+  ensureGrabHooks();
   refreshOpenPanel();
 };
 
@@ -123,12 +192,7 @@ export const endGrab = async (grabbedTokenId, { silent = false, customMsg = null
   window._activeGrabs.delete(grabbedTokenId);
 
   if (!window._activeGrabs.size) {
-    if (window._grabPreHook)        { Hooks.off('preUpdateToken',     window._grabPreHook);        window._grabPreHook        = null; }
-    if (window._grabFollowHook)     { Hooks.off('updateToken',        window._grabFollowHook);     window._grabFollowHook     = null; }
-    if (window._grabberGrabbedHook) { Hooks.off('createActiveEffect', window._grabberGrabbedHook); window._grabberGrabbedHook = null; }
-    if (window._grabRepositionHook) { Hooks.off('updateToken',        window._grabRepositionHook); window._grabRepositionHook = null; }
-    window._grabFollowActive  = new Set();
-    window._grabRepositioning = new Set();
+    removeGrabHooks();
   }
 
   if (!silent) ChatMessage.create({ content: `<strong>Grab ended:</strong> ${customMsg ?? `${grab.grabberName} releases ${grab.grabbedName}.`}` });
@@ -155,7 +219,16 @@ export const runGrab = async (grabberToken, targetToken, { forceApply = false, t
       return;
     }
     if (tier === 2) {
-      ChatMessage.create({ content: `<strong>Grab — Tier 2:</strong> ${grabberToken.name} gets hold of ${targetToken.name}!<br>${targetToken.name} may make a free strike:<br>${buildFreeStrikeButton(targetActor)}` });
+      ChatMessage.create({ content: `
+        <strong>Grab — Tier 2:</strong> ${grabberToken.name} gets hold of ${targetToken.name}!<br>
+        ${targetToken.name} may make a free strike:<br>
+        <div style="margin: 4px 0;">${buildFreeStrikeButton(targetActor)}</div>
+        <div style="display:flex;gap:4px;margin-top:6px;" class="dsct-tier2-grab-actions" data-grabber-id="${grabberToken.id}" data-target-id="${targetToken.id}">
+          <button type="button" class="apply-effect" data-action="dsct-confirm-grab" style="cursor:pointer;flex:1;"><i class="fa-solid fa-check"></i> Confirm Grab</button>
+          <button type="button" class="apply-effect" data-action="dsct-cancel-grab" style="cursor:pointer;flex:1;border-color:var(--color-text-error);color:var(--color-text-error);"><i class="fa-solid fa-times"></i> Cancel</button>
+        </div>
+      ` });
+      
       const panel = Object.values(ui.windows).find(w => w.id === 'grab-panel');
       if (panel) {
         panel._pendingConfirm = { grabberToken, targetToken };
@@ -277,27 +350,14 @@ export class GrabPanel extends Application {
       await new Promise(r => setTimeout(r, 300));
     }
 
-    const tier = await new Promise((resolve) => {
-      let hookId, timeoutId;
-      const cleanup = async (val) => {
-        Hooks.off('createChatMessage', hookId); clearTimeout(timeoutId);
-        if (baneEffectId) { const e = grabbedTok.actor.effects.get(baneEffectId); if (e) await safeDelete(e); }
-        resolve(val);
-      };
-      hookId = Hooks.on('createChatMessage', async (msg) => {
-        const parts = msg.system?.parts?.contents; if (!parts) return;
-        const ar = parts.find(p => p.type === 'abilityResult'); if (!ar) return;
-        await cleanup(ar.tier);
-      });
-      timeoutId = setTimeout(() => { ui.notifications.warn('Roll not detected.'); cleanup(null); }, TIMEOUT_MS);
-      ds.helpers.macros.rollItemMacro(escapeItem.uuid);
+    const hookId = Hooks.on('createChatMessage', async (msg) => {
+      const parts = msg.system?.parts?.contents; if (!parts) return;
+      const ar = parts.find(p => p.type === 'abilityResult'); if (!ar) return;
+      Hooks.off('createChatMessage', hookId);
+      if (baneEffectId) { const e = grabbedTok.actor.effects.get(baneEffectId); if (e) await safeDelete(e); }
     });
-
-    if (!tier) return;
-    if (tier < 2) { ChatMessage.create({ content: `<strong>Escape Grab:</strong> ${grab.grabbedName} fails to escape.` }); return; }
-    if (tier === 2) { this._pendingEscape = { grabbedTokenId }; this._refreshPanel(); return; }
-    await endGrab(grabbedTokenId, { silent: true });
-    ChatMessage.create({ content: `<strong>Escape Grab:</strong> ${grab.grabbedName} breaks free from ${grab.grabberName}!` });
+    
+    ds.helpers.macros.rollItemMacro(escapeItem.uuid);
   }
 
   async _startReposition(grabbedTokenId) {
