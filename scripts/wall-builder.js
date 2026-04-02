@@ -398,8 +398,8 @@ export class WallBuilderPanel extends Application {
     const appEl = html[0].closest('.app');
     if (appEl) {
       const saved = window._wallBuilderPanelPos;
-      appEl.style.left = saved ? `${saved.left}px` : `${Math.round(window.innerWidth - s(260))}px`;
-      appEl.style.top  = saved ? `${saved.top}px`  : '10px';
+      appEl.style.left = saved ? `${saved.left}px` : `${Math.round((window.innerWidth - (appEl.offsetWidth || s(240))) / 2)}px`;
+      appEl.style.top  = saved ? `${saved.top}px`  : `${Math.round((window.innerHeight - (appEl.offsetHeight || s(400))) / 2)}px`;
       html[0].addEventListener('mousedown', e => {
         if (e.target.closest('button') || e.target.closest('input')) return;
         e.preventDefault();

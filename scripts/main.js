@@ -10,7 +10,7 @@ import { applySquadLabels, autoRenameGroups, registerSquadLabelHooks } from './s
 import { applyTriggeredActions, registerTriggeredActionHooks } from './triggered-actions.js';
 import { registerModuleButtons } from './module-buttons.js';
 
-const MAIN_VERSION = "v1.2.6 - DF Test";
+const MAIN_VERSION = "v1.2.9 - Safe Grabs";
 console.log(`🔴 DSCT DEBUG | Loaded main.js - Version: ${MAIN_VERSION}`);
 
 const api = {
@@ -114,12 +114,17 @@ Hooks.once('init', () => {
     default: 'ALL'
   });
 
+  game.settings.register('draw-steel-combat-tools', 'restrictGrabButtons', {
+    name: 'Restrict Manual Grab Buttons to GM', hint: 'If enabled, only the GM can see and click the Apply Grab and End Grab buttons in the Grab Panel.',
+    scope: 'world', config: true, type: Boolean, default: false
+  });
+
   registerChatHooks();
   registerTacticalHooks();
   registerDeathTrackerHooks();
   registerSquadLabelHooks();
   registerTriggeredActionHooks();
-  registerModuleButtons(); // <--- Initialize the test button
+  registerModuleButtons();
 
   game.keybindings.register('draw-steel-combat-tools', 'refreshChatInjections', {
     name: 'Refresh Chat Forced Movement Buttons', hint: 'Re-injects Execute buttons into any chat messages that have forced movement data.',

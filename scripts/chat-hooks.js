@@ -99,43 +99,44 @@ const injectGrabButton = (msg, el) => {
   const data = msg.getFlag('draw-steel-combat-tools', 'grab');
   if (!data) return;
 
-  // Find DS native grabbed buttons to replace
-  // DS likely renders buttons that apply the grabbed status — search broadly
-  const allButtons = [...el.querySelectorAll('button, a')];
-  const grabBtns   = allButtons.filter(btn => {
-    if (btn.classList.contains('dsct-grab-btn')) return false;
-    const text    = btn.textContent.trim().toLowerCase();
-    const attrStr = [...btn.attributes].map(a => `${a.name}=${a.value}`).join(' ').toLowerCase();
-    return text === 'grabbed'
-        || text === 'apply grabbed'
-        || text === 'grab'
-        || (attrStr.includes('grabbed') && (btn.dataset.action || btn.dataset.statusId || btn.dataset.effect));
-  });
+  // Surgically target the exact native Draw Steel grabbed button
+  const nativeBtns = el.querySelectorAll('button[data-action="applyEffect"][data-effect-id="grabbed"]');
+  if (!nativeBtns.length) return;
 
-  for (const btn of grabBtns) {
+  for (const btn of nativeBtns) {
+    // Create our replacement button
     const newBtn = document.createElement('button');
-    newBtn.type      = 'button';
+    newBtn.type = 'button';
     newBtn.className = 'dsct-grab-btn';
-    newBtn.innerHTML = btn.innerHTML || '<i class="fa-solid fa-hand"></i> Apply Grab';
-    newBtn.style.cssText = btn.style.cssText || 'cursor:pointer;';
+    // Use a slightly different icon and text so you know it successfully hijacked!
+    newBtn.innerHTML = '<i class="fa-solid fa-hand-rock"></i> Execute Grab';
+    newBtn.style.cssText = btn.style.cssText || 'cursor:pointer; background: rgba(122, 80, 192, 0.2); border: 1px solid #7a50c0; color: var(--color-text-dark-primary);';
 
-    newBtn.addEventListener('click', async () => {
+    newBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
       const api = game.modules.get('draw-steel-combat-tools')?.api;
       if (!api) { ui.notifications.error('Draw Steel: Combat Tools not active.'); return; }
 
       const targets    = [...game.user.targets];
       const controlled = canvas.tokens.controlled;
+      
+      // Get the token of whoever rolled the ability from the chat message
       const speakerTok = data.speakerToken ? canvas?.tokens?.get(data.speakerToken) : null;
 
+      // If the user has exactly 1 token controlled, use that. Otherwise fallback to the chat speaker.
       const grabber = controlled.length === 1 ? controlled[0] : speakerTok;
-      const grabbed = targets.length   === 1 ? targets[0]    : null;
+      const grabbed = targets.length === 1 ? targets[0] : null;
 
       if (!grabber) { ui.notifications.warn('Control the grabber token or ensure the ability speaker token is on the canvas.'); return; }
       if (!grabbed) { ui.notifications.warn('Target the creature to be grabbed.'); return; }
 
+      // Fire off the API method (which natively handles the Tier logic and spawns the UI if Tier 2)
       await api.grab(grabber, grabbed, { tier: data.tier });
     });
 
+    // Replace the native button with our new one
     btn.replaceWith(newBtn);
   }
 };

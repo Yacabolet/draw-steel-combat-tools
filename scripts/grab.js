@@ -1,4 +1,4 @@
-import { getSetting } from './helpers.js';
+import { getSetting, safeCreateEmbedded, safeDelete } from './helpers.js';
 
 const TIMEOUT_MS = 60_000;
 const SCALE      = 1.2;
@@ -35,7 +35,7 @@ export const applyGrab = async (grabberTok, grabbedTok) => {
   if (!window._activeGrabs) window._activeGrabs = new Map();
   if (window._activeGrabs.has(grabbedTok.id)) await endGrab(grabbedTok.id, { silent: true });
 
-  await grabbedTok.actor.createEmbeddedDocuments('ActiveEffect', [{
+  await safeCreateEmbedded(grabbedTok.actor, 'ActiveEffect', [{
     name: 'Grabbed',
     img: 'icons/skills/melee/unarmed-punch-fist-yellow-red.webp',
     type: 'base',
@@ -47,7 +47,7 @@ export const applyGrab = async (grabberTok, grabbedTok) => {
     tint: '#ffffff', sort: 0,
   }]);
 
-  const [grabberEffect] = await grabberTok.actor.createEmbeddedDocuments('ActiveEffect', [{
+  const [grabberEffect] = await safeCreateEmbedded(grabberTok.actor, 'ActiveEffect', [{
     name: 'Grabber',
     img: 'icons/magic/control/debuff-chains-shackle-movement-red.webp',
     type: 'base',
@@ -118,8 +118,8 @@ export const endGrab = async (grabbedTokenId, { silent = false, customMsg = null
 
   const grabberTok = canvas.tokens.placeables.find(t => t.id === grab.grabberTokenId);
   const grabbedTok = canvas.tokens.placeables.find(t => t.id === grab.grabbedTokenId);
-  if (grab.grabberEffectId) { const e = grabberTok?.actor.effects.get(grab.grabberEffectId); if (e) await e.delete(); }
-  if (grab.grabbedEffectId) { const e = grabbedTok?.actor.effects.get(grab.grabbedEffectId); if (e) await e.delete(); }
+  if (grab.grabberEffectId) { const e = grabberTok?.actor.effects.get(grab.grabberEffectId); if (e) await safeDelete(e); }
+  if (grab.grabbedEffectId) { const e = grabbedTok?.actor.effects.get(grab.grabbedEffectId); if (e) await safeDelete(e); }
   window._activeGrabs.delete(grabbedTokenId);
 
   if (!window._activeGrabs.size) {
@@ -191,7 +191,7 @@ export const runGrab = async (grabberToken, targetToken, { forceApply = false, t
       const edgeSource = await fromUuid(aidEdgeUuid);
       if (edgeSource) {
         const d = edgeSource.toObject(); d.name = 'Size Advantage (Grab)';
-        const [c] = await grabberActor.createEmbeddedDocuments('ActiveEffect', [d]);
+        const [c] = await safeCreateEmbedded(grabberActor, 'ActiveEffect', [d]);
         sizeEdgeEffectId = c?.id;
         await new Promise(r => setTimeout(r, 300));
       }
@@ -202,7 +202,7 @@ export const runGrab = async (grabberToken, targetToken, { forceApply = false, t
     let hookId, timeoutId;
     const cleanup = async (val) => {
       Hooks.off('createChatMessage', hookId); clearTimeout(timeoutId);
-      if (sizeEdgeEffectId) { const e = grabberActor.effects.get(sizeEdgeEffectId); if (e) await e.delete(); }
+      if (sizeEdgeEffectId) { const e = grabberActor.effects.get(sizeEdgeEffectId); if (e) await safeDelete(e); }
       resolve(val);
     };
     hookId = Hooks.on('createChatMessage', async (msg) => {
@@ -264,7 +264,7 @@ export class GrabPanel extends Application {
     const needsBane = sizeRankG(grabbedTok.actor.system.combat.size) < sizeRankG(grabberTok.actor.system.combat.size);
     let baneEffectId = null;
     if (needsBane) {
-      const [bane] = await grabbedTok.actor.createEmbeddedDocuments('ActiveEffect', [{
+      const [bane] = await safeCreateEmbedded(grabbedTok.actor, 'ActiveEffect', [{
         name: 'Escape Grab (Size Bane)', img: 'icons/svg/downgrade.svg',
         type: 'abilityModifier',
         system: { end: { type: 'turn', roll: '' }, filters: { keywords: [] } },
@@ -281,7 +281,7 @@ export class GrabPanel extends Application {
       let hookId, timeoutId;
       const cleanup = async (val) => {
         Hooks.off('createChatMessage', hookId); clearTimeout(timeoutId);
-        if (baneEffectId) { const e = grabbedTok.actor.effects.get(baneEffectId); if (e) await e.delete(); }
+        if (baneEffectId) { const e = grabbedTok.actor.effects.get(baneEffectId); if (e) await safeDelete(e); }
         resolve(val);
       };
       hookId = Hooks.on('createChatMessage', async (msg) => {
@@ -358,6 +358,7 @@ export class GrabPanel extends Application {
       return `<div style="font-size:${s(10)}px;color:${p.textDim};text-align:center;padding:${s(10)}px 0;">No active grabs</div>`;
     }
 
+    const allowManual = !getSetting('restrictGrabButtons') || game.user.isGM;
     let html = '';
 
     if (this._pendingConfirm) {
@@ -414,9 +415,9 @@ export class GrabPanel extends Application {
             style="flex:1;font-size:${s(8)}px;padding:${s(3)}px ${s(2)}px;border-radius:${s(2)}px;cursor:pointer;
             background:${p.bgBtn};border:1px solid ${repositioning ? '#806020' : p.border};
             color:${repositioning ? '#c09030' : p.text};">${repositioning ? 'Moving...' : 'Reposition'}</button>
-          ${game.user.isGM ? `<button data-endgrab="${grab.grabbedTokenId}"
+          ${allowManual ? `<button data-endgrab="${grab.grabbedTokenId}"
             style="flex:1;font-size:${s(8)}px;padding:${s(3)}px ${s(2)}px;border-radius:${s(2)}px;cursor:pointer;
-            background:${p.bgBtn};border:1px solid ${p.accentRed};color:${p.accentRed};">[GM] End</button>` : ''}
+            background:${p.bgBtn};border:1px solid ${p.accentRed};color:${p.accentRed};">End Grab</button>` : ''}
         </div>
         ${isPending ? `<div style="border-top:1px solid ${p.border};padding-top:${s(4)}px;margin-top:${s(5)}px;font-size:${s(8)}px;color:${p.text};">
           Tier 2: ${grab.grabbedName} can escape, but ${grab.grabberName} gets a free strike first.<br>
@@ -517,6 +518,8 @@ export class GrabPanel extends Application {
     const grabberLabel = this._grabberToken?.name ?? 'No token selected';
     const targetSrc    = this._targetToken?.document.texture.src  ?? 'icons/svg/mystery-man.svg';
     const targetLabel  = this._targetToken?.name ?? 'No target';
+    
+    const allowManual = !getSetting('restrictGrabButtons') || game.user.isGM;
 
     return $(`
       <div style="padding:${s(8)}px;background:${p.bg};font-family:Georgia,serif;border-radius:${s(3)}px;cursor:move;min-height:${s(420)}px;" id="grab-drag-handle">
@@ -550,9 +553,9 @@ export class GrabPanel extends Application {
             <button data-action="attempt-grab"
               style="flex:1;padding:${s(5)}px;border-radius:${s(3)}px;cursor:pointer;font-size:${s(9)}px;
               background:${p.bgBtn};border:1px solid ${p.accent};color:${p.accent};">Attempt Grab</button>
-            ${game.user.isGM ? `<button data-action="apply-grab"
+            ${allowManual ? `<button data-action="apply-grab"
               style="flex:1;padding:${s(5)}px;border-radius:${s(3)}px;cursor:pointer;font-size:${s(9)}px;
-              background:${p.bgBtn};border:1px solid ${p.accentGreen};color:${p.accentGreen};">[GM] Apply Grab</button>` : ''}
+              background:${p.bgBtn};border:1px solid ${p.accentGreen};color:${p.accentGreen};">Apply Grab</button>` : ''}
           </div>
         </div>
 
@@ -568,9 +571,9 @@ export class GrabPanel extends Application {
 
     const appEl = html[0].closest('.app');
     if (appEl) {
-      const saved = window._grabPanelPos;
-      appEl.style.left = saved ? `${saved.left}px` : '10px';
-      appEl.style.top  = saved ? `${saved.top}px`  : `${Math.round(window.innerHeight / 2 - 250)}px`;
+	  const saved = window._grabPanelPos;
+      appEl.style.left = saved ? `${saved.left}px` : `${Math.round((window.innerWidth - (appEl.offsetWidth || s(280))) / 2)}px`;
+      appEl.style.top  = saved ? `${saved.top}px`  : `${Math.round((window.innerHeight - (appEl.offsetHeight || s(420))) / 2)}px`;
       html[0].addEventListener('mousedown', e => {
         if (e.target.closest('button') || e.target.closest('[data-ping]')) return;
         e.preventDefault();
