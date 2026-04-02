@@ -2,7 +2,7 @@
   "id": "draw-steel-combat-tools",
   "title": "Draw Steel: Combat Tools",
   "description": "<p>Draw Steel combat automation tools.</p>",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "socket": true,
   "compatibility": { "minimum": "13", "verified": "13" },
   "authors": [{ "name": "Ady", "discord": "AdyGenie", "flags": {} }],
@@ -13,7 +13,8 @@
     "requires": [
       { "id": "tagger", "type": "module", "manifest": "https://github.com/fantasycalendar/FoundryVTT-Tagger/releases/latest/download/module.json", "compatibility": { "minimum": "1.0" } },
       { "id": "wall-height", "type": "module", "compatibility": { "minimum": "7.0" } },
-      { "id": "socketlib", "type": "module", "compatibility": {} }
+      { "id": "socketlib", "type": "module", "compatibility": {} },
+      { "id": "lib-df-buttons", "type": "module", "compatibility": {} }
     ]
   },
   "esmodules": [
@@ -27,6 +28,7 @@
     "scripts/death-tracker.js",
     "scripts/squad-labels.js",
     "scripts/triggered-actions.js",
+    "scripts/module-buttons.js",
     "scripts/main.js"
   ]
 }

@@ -8,8 +8,9 @@ import { applyJudgement, applyMark, registerTacticalHooks } from './tactical-eff
 import { registerDeathTrackerHooks } from './death-tracker.js';
 import { applySquadLabels, autoRenameGroups, registerSquadLabelHooks } from './squad-labels.js';
 import { applyTriggeredActions, registerTriggeredActionHooks } from './triggered-actions.js';
+import { registerModuleButtons } from './module-buttons.js';
 
-const MAIN_VERSION = "v1.2.5 - Triggered Actions";
+const MAIN_VERSION = "v1.2.6 - DF Test";
 console.log(`🔴 DSCT DEBUG | Loaded main.js - Version: ${MAIN_VERSION}`);
 
 const api = {
@@ -101,7 +102,6 @@ Hooks.once('init', () => {
     scope: 'world', config: true, type: Boolean, default: true
   });
 
-  // --- NEW TRIGGERED ACTION SETTINGS ---
   game.settings.register('draw-steel-combat-tools', 'autoTriggeredActionsEnabled', {
     name: 'Auto-Apply Triggered Action Tracker', hint: 'Automatically place the Unspent Triggered Action effect on combatants when combat starts.',
     scope: 'world', config: true, type: Boolean, default: true
@@ -119,6 +119,7 @@ Hooks.once('init', () => {
   registerDeathTrackerHooks();
   registerSquadLabelHooks();
   registerTriggeredActionHooks();
+  registerModuleButtons(); // <--- Initialize the test button
 
   game.keybindings.register('draw-steel-combat-tools', 'refreshChatInjections', {
     name: 'Refresh Chat Forced Movement Buttons', hint: 'Re-injects Execute buttons into any chat messages that have forced movement data.',
