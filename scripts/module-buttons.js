@@ -1,55 +1,43 @@
 export const registerModuleButtons = () => {
-  Hooks.on('getModuleTools', (controlManager, tools) => {
+  Hooks.on('getSceneControlButtons', (controls) => {
     
-    // Fetch our API
-    const api = game.modules.get('draw-steel-combat-tools')?.api;
-    if (!api) return;
+    // Find the native Token Controls menu (the top icon on the left)
+    const tokenControl = controls.tokens || controls.token;
+    if (!tokenControl) return;
 
-    // The main Radial Tool
-    tools.dsct = {
-      icon: 'fas fa-hammer',
-      title: 'Draw Steel Combat Tools',
-      type: 'radial',
-      tools: {
-        grabPanel: {
-          title: 'Grab Panel',
-          icon: 'fas fa-hand-rock',
-          type: 'button',
-          onClick: () => api.grabPanel()
-        },
-        wallBuilder: {
-          title: 'Wall Builder (GM)',
-          icon: 'fas fa-dungeon',
-          type: 'button',
-          enabled: () => game.user.isGM, // Only shows up for the GM!
-          onClick: () => api.wallBuilder()
-        },
-        squadLabels: {
-          title: 'Apply Squad Labels (GM)',
-          icon: 'fas fa-tags',
-          type: 'button',
-          enabled: () => game.user.isGM,
-          onClick: () => api.squadLabels()
-        },
-        renameSquads: {
-          title: 'Auto-Rename Squads (GM)',
-          icon: 'fas fa-spell-check',
-          type: 'button',
-          enabled: () => game.user.isGM,
-          onClick: async () => {
-            await api.renameSquads();
-            ui.notifications.info("NPC Combat squads renamed.");
-          }
-        },
-        triggeredActions: {
-          title: 'Triggered Actions Tracker (GM)',
-          icon: 'fas fa-shield-alt',
-          type: 'button',
-          enabled: () => game.user.isGM,
-          onClick: () => api.triggeredActions('ALL')
-        }
+    // We fetch the API lazily when the button is clicked
+    const getApi = () => game.modules.get('draw-steel-combat-tools')?.api;
+
+    const myTools = {
+      'dsct-grab': {
+        name: 'dsct-grab',
+        title: 'Grab Panel',
+        icon: 'fas fa-hand-rock',
+        button: true,
+        visible: true,
+        onClick: () => getApi()?.grabPanel(),
+        onChange: () => getApi()?.grabPanel()
+      },
+      'dsct-wall': {
+        name: 'dsct-wall',
+        title: 'Wall Builder',
+        icon: 'fas fa-dungeon',
+        button: true,
+        visible: game.user.isGM,
+        onClick: () => getApi()?.wallBuilder(),
+        onChange: () => getApi()?.wallBuilder()
       }
     };
-    
+
+    // Safely inject tools into the native Token category for V12 or V13
+    if (Array.isArray(tokenControl.tools)) {
+      tokenControl.tools.push(...Object.values(myTools));
+    } else {
+      let orderIndex = Object.keys(tokenControl.tools).length;
+      for (const [key, tool] of Object.entries(myTools)) {
+        tool.order = orderIndex++;
+        tokenControl.tools[key] = tool;
+      }
+    }
   });
 };
