@@ -1,11 +1,9 @@
 export const registerModuleButtons = () => {
   Hooks.on('getSceneControlButtons', (controls) => {
     
-    // Find the native Token Controls menu (the top icon on the left)
     const tokenControl = controls.tokens || controls.token;
     if (!tokenControl) return;
 
-    // We fetch the API lazily when the button is clicked
     const getApi = () => game.modules.get('draw-steel-combat-tools')?.api;
 
     const myTools = {
@@ -15,8 +13,15 @@ export const registerModuleButtons = () => {
         icon: 'fas fa-hand-rock',
         button: true,
         visible: true,
-        onClick: () => getApi()?.grabPanel(),
-        onChange: () => getApi()?.grabPanel()
+        onClick: () => getApi()?.grabPanel()
+      },
+      'dsct-forced-movement': {
+        name: 'dsct-forced-movement',
+        title: 'Forced Movement',
+        icon: 'fas fa-arrows-alt',
+        button: true,
+        visible: true,
+        onClick: () => getApi()?.forcedMovementUI()
       },
       'dsct-wall': {
         name: 'dsct-wall',
@@ -24,8 +29,7 @@ export const registerModuleButtons = () => {
         icon: 'fas fa-dungeon',
         button: true,
         visible: game.user.isGM,
-        onClick: () => getApi()?.wallBuilder(),
-        onChange: () => getApi()?.wallBuilder()
+        onClick: () => getApi()?.wallBuilder()
       },
       'dsct-pwk': {
         name: 'dsct-pwk',
@@ -33,12 +37,10 @@ export const registerModuleButtons = () => {
         icon: 'fas fa-skull',
         button: true,
         visible: game.user.isGM,
-        onClick: () => getApi()?.powerWordKill(),
-        onChange: () => getApi()?.powerWordKill()
+        onClick: () => getApi()?.powerWordKill()
       }
     };
 
-    // Safely inject tools into the native Token category for V12 or V13
     if (Array.isArray(tokenControl.tools)) {
       tokenControl.tools.push(...Object.values(myTools));
     } else {

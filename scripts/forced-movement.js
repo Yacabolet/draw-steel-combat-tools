@@ -831,7 +831,7 @@ export const pickTarget = (remaining) => new Promise((resolve) => {
 });
 
 export async function runForcedMovement(macroArgs = []) {
-  if (macroArgs.length >= 2) {
+  if (Array.isArray(macroArgs) && macroArgs.length >= 2) {
     const type              = parseType(macroArgs[0]);
     const distance          = parseInt(macroArgs[1]);
     const bonusCreatureDmg  = parseInt(macroArgs[2]) || 0;
@@ -869,53 +869,242 @@ export async function runForcedMovement(macroArgs = []) {
     }
 
     await _runForcedMovement(type, distance, target, source, bonusCreatureDmg, bonusObjectDmg, verticalHeight, fallReduction, noFallDamage, ignoreStability, noCollisionDamage, keywords);
-  } else {
-    const { createFormGroup, createSelectInput, createNumberInput, createCheckboxInput } = foundry.applications.fields;
-    const content = document.createElement('div');
-    content.appendChild(createFormGroup({ label: 'Type', input: createSelectInput({ name: 'type', options: [{ value: 'Push', label: 'Push' }, { value: 'Pull', label: 'Pull' }, { value: 'Slide', label: 'Slide' }] }), classes: ['slim'] }));
-    content.appendChild(createFormGroup({ label: 'Distance', input: createNumberInput({ name: 'distance', min: 0, value: 1, step: 1 }), classes: ['slim'] }));
-    content.appendChild(createFormGroup({ label: 'Vertical', input: createCheckboxInput({ name: 'vertical', value: false }), classes: ['slim'] }));
-    content.appendChild(createFormGroup({ label: 'Vertical Distance', hint: 'Leave blank to default to distance. Push forces positive, Pull forces negative.', input: createNumberInput({ name: 'verticalHeight', value: '', step: 1 }), classes: ['slim'] }));
-    content.appendChild(createFormGroup({ label: 'Fall Reduction Bonus', hint: 'Stacks with Agility.', input: createNumberInput({ name: 'fallReduction', min: 0, value: 0, step: 1 }), classes: ['slim'] }));
-    content.appendChild(createFormGroup({ label: 'Negate Fall Damage', input: createCheckboxInput({ name: 'noFallDamage', value: false }), classes: ['slim'] }));
-    content.appendChild(createFormGroup({ label: 'Ignore Stability', input: createCheckboxInput({ name: 'ignoreStability', value: false }), classes: ['slim'] }));
-    content.appendChild(createFormGroup({ label: 'No Collision Damage', input: createCheckboxInput({ name: 'noCollisionDamage', value: false }), classes: ['slim'] }));
-
-    const fd = await ds.applications.api.DSDialog.input({ content, window: { title: 'Forced Movement' } });
-    if (!fd) return;
-
-    const type     = parseType(fd.type);
-    const distance = parseInt(fd.distance);
-    if (!type || isNaN(distance) || distance < 0) { ui.notifications.warn('Invalid input.'); return; }
-
-    let verticalHeight = 0;
-    if (fd.vertical) {
-      const sign    = type === 'Pull' ? -1 : 1;
-      const rawVert = fd.verticalHeight === '' || fd.verticalHeight === null ? null : parseInt(fd.verticalHeight);
-      verticalHeight = (rawVert === null || isNaN(rawVert) ? distance : Math.abs(rawVert)) * sign;
-    }
-
-    const fallReduction     = parseInt(fd.fallReduction) || 0;
-    const noFallDamage      = !!fd.noFallDamage;
-    const ignoreStability   = !!fd.ignoreStability;
-    const noCollisionDamage = !!fd.noCollisionDamage;
-
-    const allTargets = [...game.user.targets];
-    const controlled = canvas.tokens.controlled;
-    const source     = allTargets.length >= 1 && controlled.length === 1 ? controlled[0] : null;
-
-    if (allTargets.length === 0) {
-      const { target } = getTargetAndSource();
-      if (!target) { ui.notifications.warn('Target or select the creature to move.'); return; }
-      await _runForcedMovement(type, distance, target, source, 0, 0, verticalHeight, fallReduction, noFallDamage, ignoreStability, noCollisionDamage);
-    } else {
-      const remaining = [...allTargets];
-      while (remaining.length > 0) {
-        const chosen = await pickTarget(remaining);
-        if (!chosen) break;
-        remaining.splice(remaining.findIndex(t => t.id === chosen.id), 1);
-        await _runForcedMovement(type, distance, chosen, source, 0, 0, verticalHeight, fallReduction, noFallDamage, ignoreStability, noCollisionDamage);
-      }
-    }
+  } 
+  else if (typeof macroArgs === 'object' && !Array.isArray(macroArgs) && Object.keys(macroArgs).length > 0) {
+    const { type, distance, sourceId, targetId, verticalHeight, fallReduction, noFallDamage, noCollisionDamage, ignoreStability } = macroArgs;
+    const target = canvas.tokens.get(targetId);
+    const source = sourceId ? canvas.tokens.get(sourceId) : null;
+    if (!target) { ui.notifications.warn('DSCT | Target token not found on canvas.'); return; }
+    await _runForcedMovement(type, distance, target, source, 0, 0, verticalHeight, fallReduction, noFallDamage, ignoreStability, noCollisionDamage, []);
+  } 
+  else {
+    toggleForcedMovementPanel();
   }
 }
+
+// --- SHARED UI STYLING UTILS ---
+const SCALE = 1.2;
+const s = n => Math.round(n * SCALE);
+const palette = () => document.body.classList.contains('theme-dark') ? {
+  bg: '#0e0c14', bgInner: '#0a0810', bgBtn: '#1a1628',
+  border: '#2a2040', borderOuter: '#4a3870',
+  text: '#8a88a0', textDim: '#3a3050', textLabel: '#4a3870',
+  accent: '#7a50c0', accentRed: '#802020', accentGreen: '#206040',
+} : {
+  bg: '#f0eef8', bgInner: '#e4e0f0', bgBtn: '#dbd8ec',
+  border: '#b0a8cc', borderOuter: '#7060a8',
+  text: '#3a3060', textDim: '#8880aa', textLabel: '#5040a0',
+  accent: '#7a50c0', accentRed: '#a03030', accentGreen: '#206040',
+};
+
+// --- NEW PERSISTENT FORCED MOVEMENT PANEL ---
+export class ForcedMovementPanel extends Application {
+  constructor() {
+    super();
+    this._html = null;
+    this._sourceToken = null;
+    this._targetToken = null;
+    this._updatePreview();
+  }
+
+  static get defaultOptions() {
+    return foundry.utils.mergeObject(super.defaultOptions, {
+      id: 'dsct-fm-panel', title: 'Forced Movement', template: null,
+      width: s(290), height: 'auto', resizable: false, minimizable: false,
+    });
+  }
+
+  _updatePreview() {
+    const controlled  = canvas.tokens.controlled;
+    const targets     = [...game.user.targets];
+    this._sourceToken = controlled.length === 1 ? controlled[0] : null;
+    this._targetToken = targets.length === 1 ? targets[0] : null;
+  }
+
+  _refreshPanel() {
+    if (!this._html) return;
+    this._updatePreview();
+    const p = palette();
+
+    const sourceImg  = this._html.find('#fm-source-img')[0];
+    const sourceName = this._html.find('#fm-source-name')[0];
+    if (sourceImg)  sourceImg.src = this._sourceToken?.document.texture.src ?? 'icons/svg/mystery-man.svg';
+    if (sourceName) { sourceName.textContent = this._sourceToken?.name ?? 'No Source'; sourceName.style.color = this._sourceToken ? p.text : p.textDim; }
+
+    const targetImg  = this._html.find('#fm-target-img')[0];
+    const targetName = this._html.find('#fm-target-name')[0];
+    if (targetImg)  targetImg.src = this._targetToken?.document.texture.src ?? 'icons/svg/mystery-man.svg';
+    if (targetName) { targetName.textContent = this._targetToken?.name ?? 'No Target'; targetName.style.color = this._targetToken ? p.text : p.textDim; }
+  }
+
+  async _renderInner(data) {
+    const styleId = 'fm-panel-style';
+    const styleEl = document.getElementById(styleId) ?? document.head.appendChild(Object.assign(document.createElement('style'), { id: styleId }));
+    const p = palette();
+    styleEl.textContent = `
+      #dsct-fm-panel .window-content { padding:0; background:${p.bg}; overflow-y:auto; }
+      #dsct-fm-panel { border:1px solid ${p.borderOuter}; border-radius:3px; box-shadow:0 0 12px rgba(0,0,0,0.4); }
+      #dsct-fm-panel .window-header { display:none !important; }
+      #dsct-fm-panel .window-content { border-radius:3px; }
+      #dsct-fm-panel button:hover { filter:brightness(1.15); }
+      #dsct-fm-panel input[type="number"], #dsct-fm-panel select { background:${p.bgBtn}; color:${p.text}; border:1px solid ${p.border}; border-radius:2px; font-size:${s(9)}px; padding:${s(2)}px; }
+      #dsct-fm-panel input[type="number"]:focus, #dsct-fm-panel select:focus { outline:none; border-color:${p.accent}; }
+      #dsct-fm-panel input[type="checkbox"] { accent-color:${p.accent}; margin:0; }
+    `;
+
+    const sourceSrc   = this._sourceToken?.document.texture.src ?? 'icons/svg/mystery-man.svg';
+    const sourceLabel = this._sourceToken?.name ?? 'No Source';
+    const targetSrc   = this._targetToken?.document.texture.src ?? 'icons/svg/mystery-man.svg';
+    const targetLabel = this._targetToken?.name ?? 'No Target';
+
+    return $(`
+      <div style="padding:${s(8)}px;background:${p.bg};font-family:Georgia,serif;border-radius:${s(3)}px;cursor:move;" id="fm-drag-handle">
+
+        <div style="display:flex;align-items:center;gap:${s(6)}px;margin-bottom:${s(8)}px;">
+          <button data-action="close-window"
+            style="width:${s(16)}px;height:${s(16)}px;flex-shrink:0;cursor:pointer;
+            background:${p.bgBtn};border:1px solid ${p.border};color:${p.textDim};border-radius:2px;
+            display:flex;align-items:center;justify-content:center;font-size:${s(9)}px;padding:0;"
+            onmouseover="this.style.color='${p.text}'" onmouseout="this.style.color='${p.textDim}'">x</button>
+          <div style="font-size:${s(9)}px;text-transform:uppercase;letter-spacing:0.8px;color:${p.textLabel};">Forced Movement</div>
+        </div>
+
+        <div style="padding:${s(6)}px;border:1px solid ${p.border};border-radius:${s(3)}px;background:${p.bgInner};margin-bottom:${s(6)}px;">
+          <div style="display:flex;align-items:center;gap:${s(6)}px;">
+            <div style="display:flex;flex-direction:column;align-items:center;gap:${s(3)}px;flex:1;min-width:0;">
+              <img id="fm-source-img" src="${sourceSrc}" style="width:${s(44)}px;height:${s(44)}px;border-radius:${s(3)}px;object-fit:contain;border:1px solid ${p.border};background:${p.bg};">
+              <div id="fm-source-name" style="font-size:${s(8)}px;color:${this._sourceToken ? p.text : p.textDim};text-align:center;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${sourceLabel}</div>
+            </div>
+            <div style="font-size:${s(12)}px;color:${p.textDim};flex-shrink:0;padding-bottom:${s(10)}px;">moves</div>
+            <div style="display:flex;flex-direction:column;align-items:center;gap:${s(3)}px;flex:1;min-width:0;">
+              <img id="fm-target-img" src="${targetSrc}" style="width:${s(44)}px;height:${s(44)}px;border-radius:${s(3)}px;object-fit:contain;border:1px solid ${p.border};background:${p.bg};">
+              <div id="fm-target-name" style="font-size:${s(8)}px;color:${this._targetToken ? p.text : p.textDim};text-align:center;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${targetLabel}</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="font-size:${s(8)}px;text-transform:uppercase;letter-spacing:0.5px;color:${p.textLabel};margin-bottom:${s(4)}px;">Parameters</div>
+        <div style="padding:${s(6)}px;border:1px solid ${p.border};border-radius:${s(3)}px;background:${p.bgInner};margin-bottom:${s(6)}px;display:flex;flex-direction:column;gap:${s(4)}px;">
+          
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div style="color:${p.text};font-size:${s(9)}px;">Distance</div>
+            <div style="display:flex;gap:${s(3)}px;">
+              <select id="fm-type" style="width:${s(60)}px;">
+                <option value="Push">Push</option><option value="Pull">Pull</option><option value="Slide">Slide</option><option value="Shift">Shift</option>
+              </select>
+              <input type="number" id="fm-dist" value="1" min="1" step="1" style="width:${s(30)}px;text-align:center;" title="Squares">
+            </div>
+          </div>
+
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <label style="color:${p.textDim};font-size:${s(9)}px;display:flex;align-items:center;gap:${s(3)}px;cursor:pointer;">
+              <input type="checkbox" id="fm-vert-check"> Vertical
+            </label>
+            <input type="number" id="fm-vert-dist" placeholder="Dist" step="1" style="width:${s(40)}px;text-align:center;" title="Leave blank to match horizontal distance">
+          </div>
+
+          <div style="width:100%;height:1px;background:${p.border};margin:${s(2)}px 0;"></div>
+
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div style="color:${p.textDim};font-size:${s(9)}px;">Fall Reduction</div>
+            <input type="number" id="fm-fall-red" value="0" min="0" step="1" style="width:${s(30)}px;text-align:center;" title="Bonus (Stacks with Agility)">
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:${s(4)}px;margin-top:${s(2)}px;">
+            <label style="color:${p.textDim};font-size:${s(8)}px;display:flex;align-items:center;gap:${s(3)}px;cursor:pointer;"><input type="checkbox" id="fm-no-fall"> No Fall Dmg</label>
+            <label style="color:${p.textDim};font-size:${s(8)}px;display:flex;align-items:center;gap:${s(3)}px;cursor:pointer;"><input type="checkbox" id="fm-no-col"> No Col. Dmg</label>
+            <label style="color:${p.textDim};font-size:${s(8)}px;display:flex;align-items:center;gap:${s(3)}px;cursor:pointer;"><input type="checkbox" id="fm-ign-stab"> Ignore Stabil.</label>
+          </div>
+        </div>
+
+        <button data-action="execute-fm" style="width:100%;padding:${s(6)}px;border-radius:${s(3)}px;cursor:pointer;font-size:${s(10)}px;font-weight:bold;background:${p.bgBtn};border:1px solid ${p.accent};color:${p.accent};">
+          <i class="fas fa-arrows-alt" style="margin-right:${s(4)}px;"></i> Execute Move
+        </button>
+
+      </div>`);
+  }
+
+  activateListeners(html) {
+    super.activateListeners(html);
+    this._html = html;
+
+    const appEl = html[0].closest('.app');
+    if (appEl) {
+      const saved = window._fmPanelPos;
+      appEl.style.left = saved ? `${saved.left}px` : `${Math.round((window.innerWidth - (appEl.offsetWidth || s(290))) / 2)}px`;
+      appEl.style.top  = saved ? `${saved.top}px`  : `${Math.round((window.innerHeight - (appEl.offsetHeight || s(300))) / 2)}px`;
+      html[0].addEventListener('mousedown', e => {
+        if (e.target.closest('button') || e.target.closest('input') || e.target.closest('select')) return;
+        e.preventDefault();
+        const sx = e.clientX - appEl.offsetLeft, sy = e.clientY - appEl.offsetTop;
+        const onMove = ev => { appEl.style.left = `${ev.clientX - sx}px`; appEl.style.top = `${ev.clientY - sy}px`; };
+        const onUp   = () => {
+          window._fmPanelPos = { left: parseInt(appEl.style.left), top: parseInt(appEl.style.top) };
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+    }
+
+    if (this._hookControl) Hooks.off('controlToken', this._hookControl);
+    if (this._hookTarget)  Hooks.off('targetToken',  this._hookTarget);
+    this._hookControl = Hooks.on('controlToken', () => this._refreshPanel());
+    this._hookTarget  = Hooks.on('targetToken',  () => this._refreshPanel());
+    this._themeObserver = new MutationObserver(() => this._refreshPanel());
+    this._themeObserver.observe(document.body, { attributeFilter: ['class'] });
+
+    html.on('click', '[data-action]', async e => {
+      const action = e.currentTarget.dataset.action;
+      if (action === 'close-window') { this.close(); return; }
+      if (action === 'execute-fm') {
+        if (!this._targetToken) { ui.notifications.warn("DSCT | You must target a token."); return; }
+
+        const type = html.find('#fm-type').val();
+        const distance = parseInt(html.find('#fm-dist').val()) || 1;
+        const isVertical = html.find('#fm-vert-check').is(':checked');
+        const rawVert = html.find('#fm-vert-dist').val();
+        
+        let verticalHeight = 0;
+        if (isVertical) {
+          const sign = type === 'Pull' ? -1 : 1;
+          const parsedVert = rawVert === '' ? distance : parseInt(rawVert);
+          verticalHeight = (isNaN(parsedVert) ? distance : parsedVert) * sign;
+        }
+
+        const fallReduction = parseInt(html.find('#fm-fall-red').val()) || 0;
+        const noFallDamage = html.find('#fm-no-fall').is(':checked');
+        const noCollisionDamage = html.find('#fm-no-col').is(':checked');
+        const ignoreStability = html.find('#fm-ign-stab').is(':checked');
+
+        const api = game.modules.get('draw-steel-combat-tools')?.api;
+        if (api && api.forcedMovement) {
+          await api.forcedMovement({
+            type, distance, 
+            sourceId: this._sourceToken?.id, 
+            targetId: this._targetToken.id,
+            verticalHeight, fallReduction, 
+            noFallDamage, noCollisionDamage, ignoreStability
+          });
+        }
+      }
+    });
+  }
+
+  async close(options) {
+    if (this._hookControl)   Hooks.off('controlToken', this._hookControl);
+    if (this._hookTarget)    Hooks.off('targetToken',  this._hookTarget);
+    if (this._themeObserver) this._themeObserver.disconnect();
+    return super.close(options);
+  }
+}
+
+export const toggleForcedMovementPanel = () => {
+  const existing = Object.values(ui.windows).find(w => w.id === 'dsct-fm-panel');
+  if (existing) {
+    existing.close();
+  } else {
+    new ForcedMovementPanel().render(true);
+  }
+};

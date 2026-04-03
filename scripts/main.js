@@ -1,4 +1,4 @@
-import { runForcedMovement } from './forced-movement.js';
+import { runForcedMovement, toggleForcedMovementPanel } from './forced-movement.js';
 import { WallBuilderPanel } from './wall-builder.js';
 import { WallBuilderSettingsMenu, MATERIAL_RULE_DEFAULTS, WALL_RESTRICTION_DEFAULTS } from './wall-builder-settings.js';
 import { registerChatHooks, refreshChatInjections } from './chat-hooks.js';
@@ -27,6 +27,7 @@ const api = {
   powerWordKill: runPowerWordKillUI,
   judgement: applyJudgement,
   mark: applyMark,
+  forcedMovementUI: toggleForcedMovementPanel,
   squadLabels: applySquadLabels,
   renameSquads: autoRenameGroups,
   triggeredActions: applyTriggeredActions,
