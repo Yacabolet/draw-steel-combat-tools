@@ -123,6 +123,8 @@ export function registerDeathTrackerHooks() {
 
       await new Promise(r => setTimeout(r, 150));
       
+      if (token._controlled) token.release();
+
       const gravePos = getGraveyardPosition(token.document);
       await token.document.update({ hidden: true, alpha: 1, 'texture.tint': '#ffffff' });
       await safeTeleport(token.document, gravePos.x, gravePos.y);
@@ -396,6 +398,9 @@ export const runPowerWordKillUI = () => {
     if (event.key === 'Enter') {
       event.preventDefault(); 
       finish();
+      
+      // --- NEW: Clear native token selection ---
+      canvas.tokens.releaseAll(); 
       
       if (selectedTokens.size === 0) {
         ui.notifications.warn("No targets selected for POWER WORD: KILL.");

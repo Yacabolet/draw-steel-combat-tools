@@ -205,31 +205,6 @@ export const getWallBlockTop = (tile) => {
 };
 
 export const safeTeleport = async (tokenDoc, targetX, targetY) => {
-  const actor = tokenDoc.actor;
-  if (!actor) {
-    // Pass both flags to guarantee an unconstrained, instant move!
-    await safeUpdate(tokenDoc, { x: targetX, y: targetY }, { animate: false, teleport: true });
-    return;
-  }
-
-  const [teleportEffect] = await safeCreateEmbedded(actor, 'ActiveEffect', [{
-    name: "DSCT System Teleport",
-    img: "icons/magic/movement/abstract-ribbons-red-orange.webp",
-    type: "base",
-    changes: [{ key: "system.movement.types", mode: 5, value: "teleport", priority: null }],
-    disabled: false, transfer: false,
-    flags: { 'draw-steel-combat-tools': { isTempTeleport: true } },
-    system: { end: { type: "", roll: "" } }
-  }]);
-
-  await new Promise(r => setTimeout(r, 50));
-
-  // Pass both flags here as well!
+  // Pass the native Foundry flags to instantly snap the token without pathfinding
   await safeUpdate(tokenDoc, { x: targetX, y: targetY }, { animate: false, teleport: true });
-
-  await new Promise(r => setTimeout(r, 50));
-
-  if (teleportEffect && actor.effects.has(teleportEffect.id)) {
-    await safeDelete(teleportEffect);
-  }
 };
