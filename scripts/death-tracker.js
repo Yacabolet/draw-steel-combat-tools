@@ -1,4 +1,4 @@
-import { getSetting, safeTeleport } from './helpers.js';
+﻿import { getSetting, safeTeleport } from './helpers.js';
 
 const SKULL_SRC = 'icons/commodities/bones/skull-hollow-worn-blue.webp';
 
@@ -145,7 +145,7 @@ export function registerDeathTrackerHooks() {
     if (newHp === undefined) return;
     if (group.type !== 'squad') return;
 
-    // Filter for pure minions using the newly discovered 'monster.organization' path!
+    
     const minions = Array.from(group.members || []).filter(m => {
       if (!m || !m.actor) return false;
       const sys = m.actor.system;
@@ -155,21 +155,21 @@ export function registerDeathTrackerHooks() {
 
     if (minions.length === 0) return;
 
-    // SCENARIO 1: SQUAD WIPED (0 HP)
+    
     if (newHp <= 0) {
       const updates = [];
       for (const minion of minions) {
          if (minion.actor && !minion.actor.statuses?.has('dead') && !minion.actor.statuses?.has('dying')) {
             updates.push(minion.actor.toggleStatusEffect('dying', { active: true }));
          }
-         // Strip them from the group to correctly recalculate max HP
+         
          updates.push(minion.update({ groupId: null })); 
       }
       await Promise.allSettled(updates);
       return;
     }
 
-    // SCENARIO 2: SQUAD BREAKPOINT (1+ Minions need to die)
+    
     const indivHP = minions[0].actor?.system?.stamina?.max || 1;
     const currentCount = minions.length;
     const expectedCount = Math.ceil(newHp / indivHP);
@@ -332,7 +332,7 @@ const executeRevival = async (tokenId, explicitTile = null) => {
               try {
                   await actor.deleteEmbeddedDocuments("ActiveEffect", validEffectIds);
               } catch (e) {
-                  console.warn("DSCT | Minor error clearing remaining effects: ", e);
+                  console.warn("DSCT | DT | Minor error clearing remaining effects: ", e);
               }
           }
       }
@@ -340,7 +340,7 @@ const executeRevival = async (tokenId, explicitTile = null) => {
 
   await tokenDoc.update({ hidden: false });
 
-  // Restore combatant in active combat, placing them back in their original group if recorded.
+  
   if (game.combat && !game.combat.combatants.find(c => c.tokenId === tokenId)) {
     const savedGroupId = tokenDoc.getFlag('draw-steel-combat-tools', 'savedGroupId');
     const group = savedGroupId ? game.combat.groups.get(savedGroupId) : null;
@@ -396,7 +396,7 @@ export const runPowerWordKillUI = (options = {}) => {
   
   const selectedTokens = new Set();
 
-  // Auto-Select targeted tokens if this was triggered by a breakpoint
+  
   if (squadGroup) {
       for (const t of game.user.targets) {
           if (npcs.some(n => n.id === t.id) && selectedTokens.size < maxTargets) {
@@ -487,14 +487,14 @@ export const runPowerWordKillUI = (options = {}) => {
         const t = canvas.tokens.get(id);
         if (t && t.actor) {
            if (squadGroup) {
-               // Squad logic uses 'dying' and removes from group to calculate HP
+               
                if (!t.actor.statuses?.has('dead') && !t.actor.statuses?.has('dying')) {
                    deadUpdates.push(t.actor.toggleStatusEffect('dying', { active: true }));
                }
                const combatant = minionCombatants.find(c => c.tokenId === id);
                if (combatant) deadUpdates.push(combatant.update({ groupId: null }));
            } else {
-               // Manual PWK uses 'dead'
+               
                if (!t.actor.statuses?.has('dead')) {
                    deadUpdates.push(t.actor.toggleStatusEffect('dead', { active: true }));
                }

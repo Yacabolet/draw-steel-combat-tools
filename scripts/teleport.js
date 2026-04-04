@@ -1,9 +1,9 @@
-import {
+﻿import {
   hasTags, GRID as getGRID, toGrid, toWorld, gridDist,
   tokenAt, tileAt, safeUpdate, replayUndo, getWallBlockTop
 } from './helpers.js';
 
-// --- SHARED UI STYLING UTILS ---
+
 const SCALE = 1.2;
 const s = n => Math.round(n * SCALE);
 const palette = () => document.body.classList.contains('theme-dark') ? {
@@ -18,7 +18,7 @@ const palette = () => document.body.classList.contains('theme-dark') ? {
   accent: '#7a50c0', accentRed: '#a03030', accentGreen: '#206040',
 };
 
-// --- TELEPORT LOGIC ---
+
 const chooseTeleportSquare = (sourceToken, maxDist) => new Promise((resolve) => {
   const GRID = getGRID();
   const w = sourceToken.document.width ?? 1;
@@ -28,7 +28,7 @@ const chooseTeleportSquare = (sourceToken, maxDist) => new Promise((resolve) => 
   const checkArea = (startX, startY) => {
      let landedOnObject = null;
 
-     // 1. Check against ALL other tokens
+     
      for (const t of canvas.tokens.placeables) {
          if (t.id === sourceToken.id) continue;
          if (t.actor?.statuses?.has('dead')) continue; 
@@ -54,7 +54,7 @@ const chooseTeleportSquare = (sourceToken, maxDist) => new Promise((resolve) => 
          }
      }
 
-     // 2. Check obstacle tiles (Walls)
+     
      let landedOnWallTop = null;
      for (let ix = 0; ix < w; ix++) {
          for (let iy = 0; iy < h; iy++) {
@@ -66,22 +66,22 @@ const chooseTeleportSquare = (sourceToken, maxDist) => new Promise((resolve) => 
                  const wallTop = getWallBlockTop(tile);
                  if (wallTop !== null) {
                      const surfaceElev = wallTop - 1;
-                     // Check if the wall is short enough to teleport onto
+                     
                      if (surfaceElev <= maxDist) {
                          if (landedOnWallTop === null || surfaceElev > landedOnWallTop) {
                              landedOnWallTop = surfaceElev;
                          }
                      } else {
-                         return { free: false }; // Wall is too tall!
+                         return { free: false }; 
                      }
                  } else {
-                     return { free: false }; // Impassable obstacle with no valid wall height
+                     return { free: false }; 
                  }
              }
          }
      }
      
-     // 3. Calculate Final Elevation
+     
      if (landedOnObject) {
          const objW = landedOnObject.document.width ?? 1;
          const objH = landedOnObject.document.height ?? 1;
@@ -94,7 +94,7 @@ const chooseTeleportSquare = (sourceToken, maxDist) => new Promise((resolve) => 
          return { free: true, isOnTerrain: true, targetElev: landedOnWallTop };
      }
 
-     // If not landing on an object or a wall, reset elevation to 0!
+     
      return { free: true, isOnTerrain: false, targetElev: 0 };
   };
 
@@ -131,7 +131,7 @@ const chooseTeleportSquare = (sourceToken, maxDist) => new Promise((resolve) => 
     for (const g of candidates) {
       const isHover = hoverGrid && g.x === hoverGrid.x && g.y === hoverGrid.y;
       
-      // Cyber Cyan for Objects/Walls, Arcane Purple for ground
+      
       const color = g.isOnTerrain ? 0x00d4ff : 0xaa33ff; 
       graphics.beginFill(color, isHover ? 0.6 : 0.2); 
       graphics.drawRect(g.x * GRID, g.y * GRID, GRID * w, GRID * h); 
@@ -194,7 +194,7 @@ const executeTeleport = async (token, distance, animate, colorHex, animDuration 
    const origAlpha = token.document.alpha;
    const origTint  = token.document.texture.tint || null;
    
-   // Apply Object/Wall Elevation, or reset to 0!
+   
    const destElev = chosenGrid.targetElev !== null ? chosenGrid.targetElev : 0;
    const targetWorld = { ...toWorld(chosenGrid), elevation: destElev };
    const actualDist = gridDist(toGrid(origWorld), chosenGrid);
@@ -204,7 +204,7 @@ const executeTeleport = async (token, distance, animate, colorHex, animDuration 
        await new Promise(r => setTimeout(r, animDuration));
    }
 
-   // Snap to Destination (including dynamic elevation!)
+   
    await safeUpdate(token.document, { x: targetWorld.x, y: targetWorld.y, elevation: targetWorld.elevation }, { animate: false, teleport: true });
 
    if (animate) {
@@ -212,7 +212,7 @@ const executeTeleport = async (token, distance, animate, colorHex, animDuration 
        await new Promise(r => setTimeout(r, animDuration));
    }
 
-   // --- NEW: Immediately expire previous teleport buttons for this token ---
+   
    const oldMoveId = token.document.getFlag('draw-steel-combat-tools', 'lastTpMoveId');
    if (oldMoveId) {
      const oldMsg = game.messages.contents.find(m => m.getFlag('draw-steel-combat-tools', 'moveId') === oldMoveId);
@@ -252,7 +252,7 @@ export async function runTeleport(macroArgs = []) {
   }
 }
 
-// --- TELEPORT UI PANEL ---
+
 export class TeleportPanel extends Application {
   constructor() {
     super();
@@ -302,7 +302,7 @@ export class TeleportPanel extends Application {
     const sourceSrc   = this._sourceToken?.document.texture.src ?? 'icons/svg/mystery-man.svg';
     const sourceLabel = this._sourceToken?.name ?? 'Select exactly 1 token';
     
-    // FETCH THE SAVED SETTINGS!
+    
     const saved = game.user.getFlag('draw-steel-combat-tools', 'tpSettings') || { dist: 5, anim: true, color: '#a030ff', duration: 600 };
 
     return $(`
@@ -400,7 +400,7 @@ export class TeleportPanel extends Application {
         await game.user.setFlag('draw-steel-combat-tools', 'tpSettings', { dist, anim, color, duration });
     };
 
-    // Gray out fields when disabled, and immediately save!
+    
     animCheck.on('change', () => {
         const isChecked = animCheck.is(':checked');
         animOpts.css('opacity', isChecked ? '1' : '0.4');
@@ -426,7 +426,7 @@ export class TeleportPanel extends Application {
         const color    = html.find('#tp-color').val() || "#a030ff";
         const duration = parseInt(html.find('#tp-duration').val()) || 600;
 
-        await saveSettings(); // One last save check before execution!
+        await saveSettings(); 
         await executeTeleport(this._sourceToken, dist, animate, color, duration);
       }
     });
@@ -448,7 +448,7 @@ export const toggleTeleportPanel = () => {
   }
 };
 
-// --- CHAT HOOK ---
+
 export const registerTeleportHooks = () => {
   const STATUS_STYLE = 'text-align: center; color: var(--color-text-dark-secondary); font-style: italic; font-size: 11px; padding: 4px; border: 1px dashed var(--color-border-dark-4); border-radius: 3px;';
 
@@ -494,13 +494,13 @@ export const registerTeleportHooks = () => {
       btn.on('click', async (e) => {
         e.preventDefault();
         
-        // --- NEW: Safety check! Even if the chat log hasn't refreshed, verify position before firing! ---
+        
         const token = canvas.scene.tokens.get(targetId);
         if (token && finalPos) {
            const isDead = token.actor?.statuses?.has('dead') || token.hidden;
            const lastMoveId = token.getFlag('draw-steel-combat-tools', 'lastTpMoveId');
            
-           // If they teleported again, OR were manually moved (and aren't dead)
+           
            if ((lastMoveId && lastMoveId !== moveId) || (!isDead && (token.x !== finalPos.x || token.y !== finalPos.y || (token.elevation ?? 0) !== finalPos.elevation))) {
                ui.notifications.warn("DSCT | Undo expired: Token has moved since the teleport.");
                await safeUpdate(msg, { 'flags.draw-steel-combat-tools.isExpired': true });

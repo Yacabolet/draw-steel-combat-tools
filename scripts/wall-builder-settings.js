@@ -1,4 +1,4 @@
-export const MATERIAL_RULE_DEFAULTS = {
+﻿export const MATERIAL_RULE_DEFAULTS = {
   glass: { cost: 1, damage: 3 },
   wood:  { cost: 3, damage: 5 },
   stone: { cost: 6, damage: 8 },

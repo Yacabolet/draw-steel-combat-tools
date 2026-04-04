@@ -1,4 +1,4 @@
-import { runForcedMovement } from './forced-movement.js';
+﻿import { runForcedMovement } from './forced-movement.js';
 import { runGrab, buildFreeStrikeButton } from './grab.js';
 import { canForcedMoveTarget, getItemRange, getItemDsid, getSetting } from './helpers.js';
 
@@ -99,7 +99,7 @@ const injectGrabButton = (msg, el) => {
   const data = msg.getFlag('draw-steel-combat-tools', 'grab');
   if (!data) return;
 
-  // Surgically target the exact native Draw Steel grabbed button
+  
   const nativeBtns = el.querySelectorAll('button[data-action="applyEffect"][data-effect-id="grabbed"]');
   if (!nativeBtns.length) return;
 
@@ -125,7 +125,7 @@ const injectGrabButton = (msg, el) => {
       
       let grabbed = targets.length === 1 ? targets[0] : null;
 
-      // Parse the header for target logic if they didn't manually click a target
+      
       if (!grabbed) {
         const targetHeaders = el.querySelectorAll('.dice-roll .header[data-uuid]');
         if (targetHeaders.length === 1) {
@@ -155,7 +155,7 @@ const injectGrabButton = (msg, el) => {
 };
 
 const injectGrabResolutions = (msg, el) => {
-  // 1. TIER 2 GRAB RESOLUTION
+  
   const grabActions = el.querySelector('.dsct-tier2-grab-actions');
   if (grabActions && !grabActions.dataset.bound) {
     grabActions.dataset.bound = "true";
@@ -169,7 +169,7 @@ const injectGrabResolutions = (msg, el) => {
         const target = canvas.tokens.get(grabActions.dataset.targetId) || canvas.tokens.placeables.find(t=>t.id===grabActions.dataset.targetId);
         if (grabber && target) await api?.grab(grabber, target, { forceApply: true });
         
-        // Permanently modify the chat message HTML in the database
+        
         const newContent = msg.content.replace(/<div[^>]*class="dsct-tier2-grab-actions"[^>]*>.*?<\/div>/s, '<div style="margin-top:6px;"><em>Grab Confirmed</em></div>');
         if (msg.isOwner || game.user.isGM) await msg.update({ content: newContent });
         else grabActions.innerHTML = '<em>Grab Confirmed</em>';
@@ -189,7 +189,7 @@ const injectGrabResolutions = (msg, el) => {
     });
   }
 
-  // 2. TIER 2 ESCAPE GRAB RESOLUTION
+  
   const escapeData = msg.getFlag('draw-steel-combat-tools', 'escapeGrab');
   if (escapeData && escapeData.tier === 2) {
     if (el.querySelector('.dsct-escape-actions')) return; 
@@ -200,7 +200,7 @@ const injectGrabResolutions = (msg, el) => {
     const container = document.createElement('div');
     container.className = 'dsct-escape-actions';
 
-    // If already resolved in the database, just show the text and stop!
+    
     if (resolvedState) {
       container.innerHTML = `<div style="margin-top:8px; font-size: 13px; border-top: 1px solid var(--color-border-light-primary); padding-top: 8px;"><em>${resolvedState === 'accepted' ? 'Escape Accepted' : 'Stayed Grabbed'}</em></div>`;
       targetArea.appendChild(container);
@@ -230,7 +230,7 @@ const injectGrabResolutions = (msg, el) => {
         await api?.endGrab(escapeData.speakerToken, { silent: true });
         ChatMessage.create({ content: `<strong>Escape Grab:</strong> ${grab.grabbedName} escapes after taking a free strike.` });
         
-        // Permanently set the flag in the database
+        
         if (msg.isOwner || game.user.isGM) await msg.setFlag('draw-steel-combat-tools', 'escapeResolved', 'accepted');
         else container.innerHTML = '<em>Escape Accepted</em>';
         
@@ -292,7 +292,7 @@ export function registerChatHooks() {
       }
     }
 
-    // NEW LOGIC: Track the global "Escape Grab" manuever
+    
     if (!msg.getFlag('draw-steel-combat-tools', 'escapeGrab')) {
       if (dsid === 'escape-grab' || item.name.toLowerCase().includes('escape grab')) {
         const grabbedTokenId = msg.speaker?.token;
@@ -302,7 +302,7 @@ export function registerChatHooks() {
             tier
           });
 
-          // Auto-resolve Tier 1 and 3 without injecting any buttons
+          
           const grab = window._activeGrabs.get(grabbedTokenId);
           if (tier >= 3) {
             const api = game.modules.get('draw-steel-combat-tools')?.api;
@@ -313,7 +313,7 @@ export function registerChatHooks() {
           } else if (tier === 1) {
             ChatMessage.create({ content: `<strong>Escape Grab:</strong> ${grab.grabbedName} fails to escape.` });
           } else if (tier === 2) {
-             // For Tier 2, just sync the panel UI. tryInject() will handle building the chat buttons!
+             
              const panel = Object.values(ui.windows).find(w => w.id === 'grab-panel');
              if (panel) {
                  panel._pendingEscape = { grabbedTokenId };

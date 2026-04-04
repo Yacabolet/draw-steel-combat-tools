@@ -1,4 +1,4 @@
-export const getSetting = (key) => game.settings.get('draw-steel-combat-tools', key);
+﻿export const getSetting = (key) => game.settings.get('draw-steel-combat-tools', key);
 
 export const hasTags    = (obj, tag)  => Tagger.hasTags(obj, tag);
 export const getTags    = (obj)       => Tagger.getTags(obj);
@@ -95,7 +95,7 @@ export const replayUndo = async (ops) => {
           break;
       }
     } catch (e) {
-      console.error('DSCT | replayUndo error on entry:', entry, e);
+      console.error('DSCT | HLP | replayUndo error on entry:', entry, e);
     }
   }
 };

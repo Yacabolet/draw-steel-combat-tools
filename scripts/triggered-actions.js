@@ -1,4 +1,4 @@
-import { safeCreateEmbedded, safeDelete, safeUpdate, getSetting } from './helpers.js';
+﻿import { safeCreateEmbedded, safeDelete, safeUpdate, getSetting } from './helpers.js';
 
 const TRIGGER_ORIGIN = 'dsct-triggered-action';
 
@@ -23,7 +23,7 @@ const shouldApply = (actor, mode, targetedIds = new Set()) => {
   if (mode === 'HEROES')   return actor.type === 'hero';
   if (mode === 'NPCS')     return actor.type !== 'hero';
   if (mode === 'TARGETED') return targetedIds.has(actor.id);
-  return true; // 'ALL'
+  return true; 
 };
 
 const enableEffect = async (actor) => {
@@ -43,8 +43,8 @@ const disableEffect = async (actor) => {
 };
 
 export const applyTriggeredActions = async (mode = 'ALL', silent = false) => {
-  // RELAXED CHECK: We only check if a combat encounter exists, 
-  // because .started is technically false during the combatStart hook!
+  
+  
   if (!game.combat) {
     if (!silent) ui.notifications.warn('No active combat encounter.');
     return;
@@ -56,7 +56,7 @@ export const applyTriggeredActions = async (mode = 'ALL', silent = false) => {
     return;
   }
 
-  // 1. Clean up effects from tokens that no longer match the criteria
+  
   for (const token of canvas.tokens.placeables) {
     const actor = token.actor;
     if (!actor) continue;
@@ -68,7 +68,7 @@ export const applyTriggeredActions = async (mode = 'ALL', silent = false) => {
     }
   }
 
-  // 2. Apply to valid combatants
+  
   for (const combatant of game.combat.combatants.contents) {
     const actor = getActorFromCombatant(combatant);
     if (!actor) continue;
@@ -92,15 +92,15 @@ export const registerTriggeredActionHooks = () => {
     if (!game.users.activeGM?.isSelf) return;
 
     const targetMode = getSetting('autoTriggeredActionsTarget');
-    await applyTriggeredActions(targetMode, true); // silent = true
+    await applyTriggeredActions(targetMode, true); 
   });
 
   Hooks.on('updateCombat', async (combat, changes) => {
     if (!game.users.activeGM?.isSelf) return;
     if (changes.round === undefined) return;
 
-    // Refresh the tracker at the start of a new round
-    // Only re-enables for actors who already have the effect tracker on their sheet
+    
+    
     for (const combatant of combat.combatants.contents) {
       const actor = getActorFromCombatant(combatant);
       if (!actor) continue;

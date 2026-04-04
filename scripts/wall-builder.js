@@ -1,4 +1,4 @@
-import {
+﻿import {
   MATERIAL_ICONS, MATERIAL_ALPHA, WALL_RESTRICTIONS,
   getMaterial, tileAt,
   hasTags, getTags, getByTag, addTags, removeTags,
@@ -83,8 +83,6 @@ const placeBlock = async (gx, gy, material, heightBottom = '', heightTop = '', i
   return { tileId: tile.id, blockId };
 };
 
-// When a wall is removed or broken, restore sight on any wall sharing the same edge
-// to that wall's own material default (glass stays at 0 always).
 const restoreOverlappingSight = async (wall) => {
   const [x1, y1, x2, y2] = wall.c;
   const partners = canvas.scene.walls.contents.filter(w =>
@@ -100,7 +98,6 @@ const restoreOverlappingSight = async (wall) => {
   }
 };
 
-// When a wall is fixed/restored, re-suppress sight on it and any non-broken overlap partner.
 const suppressOverlappingSight = async (wall) => {
   const wallMat = (wall.flags?.tagger?.tags ?? []).find(t => MATERIALS.includes(t));
   if (wallMat === 'glass') return;
@@ -320,8 +317,8 @@ export class WallBuilderPanel extends Application {
         const mat         = tags.find(t => MATERIALS.includes(t)) ?? '(none)';
         const blockTag    = tags.find(t => t.startsWith('wall-block-')) ?? null;
         const walls       = blockTag ? getByTag(blockTag).filter(o => Array.isArray(o.c)) : [];
-        const bottom      = walls[0]?.flags?.['wall-height']?.bottom ?? '—';
-        const top         = walls[0]?.flags?.['wall-height']?.top    ?? '—';
+        const bottom      = walls[0]?.flags?.['wall-height']?.bottom ?? '-';
+        const top         = walls[0]?.flags?.['wall-height']?.top    ?? '-';
         const isBroken    = hasTags(tile, 'broken');
         const isPartial   = hasTags(tile, 'partially-broken');
         const isStable    = hasTags(tile, 'stable');

@@ -1,4 +1,4 @@
-import { runForcedMovement, toggleForcedMovementPanel, registerForcedMovementHooks } from './forced-movement.js';
+﻿import { runForcedMovement, toggleForcedMovementPanel, registerForcedMovementHooks } from './forced-movement.js';
 import { WallBuilderPanel } from './wall-builder.js';
 import { WallBuilderSettingsMenu, MATERIAL_RULE_DEFAULTS, WALL_RESTRICTION_DEFAULTS } from './wall-builder-settings.js';
 import { registerChatHooks, refreshChatInjections } from './chat-hooks.js';
@@ -11,8 +11,6 @@ import { applyTriggeredActions, registerTriggeredActionHooks } from './triggered
 import { registerModuleButtons } from './module-buttons.js';
 import { toggleTeleportPanel, registerTeleportHooks, runTeleport } from './teleport.js';
 
-const MAIN_VERSION = "v0.3.5 - Undo Expired Fix";
-console.log(`🔴 DSCT DEBUG | Loaded main.js - Version: ${MAIN_VERSION}`);
 
 const api = {
   forcedMovement: runForcedMovement,
@@ -136,8 +134,13 @@ Hooks.once('init', () => {
     scope: 'world', config: true, type: Boolean, default: false
   });
 
+  game.settings.register('draw-steel-combat-tools', 'debugMode', {
+    name: 'Debug Mode', hint: 'If enabled, verbose debug messages are printed to the browser console for forced movement and other systems.',
+    scope: 'world', config: true, type: Boolean, default: false
+  });
+
   registerChatHooks();
-  registerGrabHooks(); 
+  registerGrabHooks();
   registerTacticalHooks();
   registerDeathTrackerHooks();
   registerSquadLabelHooks();
@@ -145,6 +148,8 @@ Hooks.once('init', () => {
   registerModuleButtons();
   registerForcedMovementHooks();
   registerTeleportHooks();
+
+  console.log('DSCT | Initialized');
 
   game.keybindings.register('draw-steel-combat-tools', 'refreshChatInjections', {
     name: 'Refresh Chat Forced Movement Buttons', hint: 'Re-injects Execute buttons into any chat messages that have forced movement data.',
@@ -162,4 +167,6 @@ Hooks.once('socketlib.ready', () => {
   socket.register('createEmbedded', async (parentUuid, type, data) => { const parent = await fromUuid(parentUuid); if (parent) return await parent.createEmbeddedDocuments(type, data); });
   socket.register('toggleStatusEffect', async (uuid, effectId, options) => { const actor = await fromUuid(uuid); if (actor) return await actor.toggleStatusEffect(effectId, options); });
   socket.register('takeDamage', async (uuid, amount, options) => { const actor = await fromUuid(uuid); if (actor) return await actor.system.takeDamage(amount, options); });
+
+  console.log('DSCT | Sockets registered successfully');
 });

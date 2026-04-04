@@ -1,4 +1,4 @@
-import { safeCreateEmbedded, safeDelete, getSetting } from './helpers.js';
+﻿import { safeCreateEmbedded, safeDelete, getSetting } from './helpers.js';
 
 const SQUAD_ORIGIN = 'dsct-squad-label';
 const ICON_PATH    = 'modules/draw-steel-combat-tools/assets/icons';
@@ -16,7 +16,7 @@ const GROUP_TINTS = {
   10: '#ff88aa',
 };
 
-// Renames all NPC-only combat groups to "Group 1", "Group 2", etc.
+
 export const autoRenameGroups = async () => {
   if (!game.combat) return;
   
@@ -27,7 +27,7 @@ export const autoRenameGroups = async () => {
     const combatants = [...group.members];
     if (!combatants.length) continue;
     
-    // Only rename groups that contain exclusively NPCs
+    
     if (!combatants.every(c => c.actor?.type !== 'hero')) continue;
 
     await group.update({ name: `Group ${groupNum}` });
@@ -41,7 +41,7 @@ export const applySquadLabels = async () => {
     return;
   }
 
-  // Safely remove existing squad labels based on their origin tag
+  
   const allTokens = canvas.tokens.placeables;
   for (const token of allTokens) {
     if (!token.actor) continue;
@@ -51,7 +51,7 @@ export const applySquadLabels = async () => {
     }
   }
 
-  // Apply the new labels
+  
   for (const group of game.combat.groups?.contents ?? []) {
     const match = group.name.match(/^Group (\d+)([a-z]?)$/i);
     if (!match) continue;
@@ -97,7 +97,7 @@ export const applySquadLabels = async () => {
     }
   }
 
-  // Only show the notification if the user triggered it manually via the macro
+  
   if (!game.combat.started) {
     ui.notifications.info("Squad labels applied.");
   }
@@ -105,16 +105,16 @@ export const applySquadLabels = async () => {
 
 export const registerSquadLabelHooks = () => {
   Hooks.on('combatStart', async (combat, updateData) => {
-    // Check if the auto-apply setting is turned on
+    
     if (!getSetting('autoSquadLabelsEnabled')) return;
 
-    // Only the active GM runs this
+    
     if (!game.users.activeGM?.isSelf) return;
 
-    // YIELD TO TRIGGERED ACTIONS
-    // We pause for 500ms to allow the Triggered Actions tracker to finish 
-    // applying its effects. This prevents a database race condition where 
-    // both scripts try to modify the same actor at the exact same time.
+    
+    
+    
+    
     await new Promise(resolve => setTimeout(resolve, 500));
 
     new Dialog({

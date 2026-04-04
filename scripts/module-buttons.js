@@ -1,4 +1,4 @@
-export const registerModuleButtons = () => {
+﻿export const registerModuleButtons = () => {
   Hooks.on('getSceneControlButtons', (controls) => {
     
     const tokenControl = controls.tokens || controls.token;

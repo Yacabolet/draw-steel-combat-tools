@@ -1,4 +1,4 @@
-import { getSetting, safeCreateEmbedded, safeDelete } from './helpers.js';
+﻿import { getSetting, safeCreateEmbedded, safeDelete } from './helpers.js';
 
 const TIMEOUT_MS = 60_000;
 const SCALE      = 1.2;
@@ -31,7 +31,6 @@ const refreshOpenPanel = () => {
   if (panel) panel._refreshPanel();
 };
 
-// --- NEW HOOK MANAGEMENT ---
 const ensureGrabHooks = () => {
   if (!window._grabFollowActive)  window._grabFollowActive  = new Set();
   if (!window._grabRepositioning) window._grabRepositioning = new Set();
@@ -85,7 +84,6 @@ const removeGrabHooks = () => {
   window._grabRepositioning = new Set();
 };
 
-// --- NEW REHYDRATION LOGIC ---
 const rehydrateGrabs = () => {
   window._activeGrabs = new Map();
   if (!canvas?.tokens?.placeables) return;
@@ -126,18 +124,16 @@ const rehydrateGrabs = () => {
   if (window._activeGrabs.size > 0) {
     ensureGrabHooks();
     refreshOpenPanel();
-    // Force the chat to re-render 1/4th of a second after the canvas loads
-    // so any pending Tier 2 escapes can successfully find the active grabs!
+    
+    
     setTimeout(() => { ui.chat?.render(true); }, 250);
   }
 };
 
 export const registerGrabHooks = () => {
-  // Wait for the canvas to be ready so we have tokens to check
+  
   Hooks.on('canvasReady', rehydrateGrabs);
 };
-// -----------------------------
-
 
 export const applyGrab = async (grabberTok, grabbedTok) => {
   if (!window._activeGrabs) window._activeGrabs = new Map();
@@ -220,7 +216,7 @@ export const runGrab = async (grabberToken, targetToken, { forceApply = false, t
     }
     if (tier === 2) {
       ChatMessage.create({ content: `
-        <strong>Grab — Tier 2:</strong> ${grabberToken.name} gets hold of ${targetToken.name}!<br>
+        <strong>Grab - Tier 2:</strong> ${grabberToken.name} gets hold of ${targetToken.name}!<br>
         ${targetToken.name} may make a free strike:<br>
         <div style="margin: 4px 0;">${buildFreeStrikeButton(targetActor)}</div>
         <div style="display:flex;gap:4px;margin-top:6px;" class="dsct-tier2-grab-actions" data-grabber-id="${grabberToken.id}" data-target-id="${targetToken.id}">
@@ -237,7 +233,7 @@ export const runGrab = async (grabberToken, targetToken, { forceApply = false, t
       return;
     }
     await applyGrab(grabberToken, targetToken);
-    ChatMessage.create({ content: `<strong>Grab — Tier 3:</strong> ${grabberToken.name} grabs ${targetToken.name}!` });
+    ChatMessage.create({ content: `<strong>Grab - Tier 3:</strong> ${grabberToken.name} grabs ${targetToken.name}!` });
     return;
   }
 

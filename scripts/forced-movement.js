@@ -1,4 +1,4 @@
-import {
+﻿import {
   hasTags, getTags, getByTag, addTags, removeTags,
   GRID as getGRID,
   toGrid, toWorld, toCenter, gridEq, gridDist,
@@ -11,7 +11,6 @@ import {
   replayUndo, getSetting,
 } from './helpers.js';
 
-const FM_DEBUG = true; // Set to true to enable verbose forced-movement debug logging.
 
 const parseType = (raw) => {
   const t = (raw ?? '').toLowerCase();
@@ -243,7 +242,7 @@ const splitTileAtElevation = async (tile, splitElev, undoOps, collisionMsgs) => 
   undoOps.push({ op: 'addTags',    uuid: tile.document.uuid, tags: [blockTag] });
 };
 
-// Returns the elevation the token will actually settle at after any fall.
+
 const applyFallDamage = async (targetToken, finalElev, landingGrid, agility, canFly, undoOps, collisionMsgs, fallReduction = 0, noFallDamage = false) => {
   if (!isNaN(finalElev) && !canFly && finalElev > 0) {
     const GRID = getGRID();
@@ -387,7 +386,7 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
     return summary;
   };
 
-  // --- NEW: FAST MOVE AUTO-PATHING ---
+  
   let autoPath = null;
   if (fastMove && reduced > 0) {
       if (sourceToken && (type === 'Push' || type === 'Pull')) {
@@ -418,7 +417,7 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
                       let distSource = gridDist(adj, sourceGrid);
                       let currDistSource = gridDist(currGrid, sourceGrid);
                       
-                      // Push must move further away. Pull must move closer.
+                      
                       if (type === 'Push' && distSource <= currDistSource) continue;
                       if (type === 'Pull' && distSource >= currDistSource && distSource !== 0) continue;
 
@@ -426,14 +425,14 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
                       let vx = c.x - targetToken.center.x;
                       let vy = c.y - targetToken.center.y;
                       
-                      // Must be progressing forward along the projected ray
+                      
                       let dot = vx * dirX + vy * dirY;
                       if (dot <= 0.1) continue; 
 
-                      // Find distance from the mathematical line
+                      
                       let cross = Math.abs(vx * dirY - vy * dirX);
                       
-                      // Score = Cross distance (minimize) - Dot progress (maximize ties)
+                      
                       let score = cross - dot * 0.001; 
                       
                       if (score < bestScore) {
@@ -442,7 +441,7 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
                       }
                   }
                   
-                  if (!bestNext) break; // Token got trapped by geometry, ending path early
+                  if (!bestNext) break; 
                   autoPath.push(bestNext);
                   currGrid = bestNext;
               }
@@ -454,7 +453,7 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
       }
   }
 
-  // AutoPath intercepts the Promise! If it failed or wasn't requested, it seamlessly falls back to manual!
+  
   let finalPath = autoPath;
   if (!finalPath) {
     finalPath = await new Promise((resolve) => {
@@ -471,8 +470,8 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
     const colorSuggest = 0x88ffbb;
     const colorInvalid = 0xcc4444;
 
-    // BFS from startGrid to find all squares reachable within `reduced` steps.
-    // Ignores the no-revisit constraint (minor approximation fine for a visual hint).
+    
+    
     const computeRangeHighlight = () => {
       const reachable = new Set();
       const key = g => `${g.x},${g.y}`;
@@ -516,8 +515,8 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
       return true;
     };
 
-    // Returns an array of grid steps from `from` (exclusive) to `to` (inclusive) via
-    // straight-line interpolation, or null if the path would be invalid or too long.
+    
+    
     const getSuggestedPath = (from, to) => {
       const remaining = reduced - path.length;
       const steps = [];
@@ -635,7 +634,7 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
     const vertNote = isVertical ? ` vertical ${reducedVert}` : '';
     ui.notifications.info(`${type} ${reduced}${vertNote}: click squares to trace path. Right-click to undo. Enter to confirm. Escape to cancel.`);
   });
-  } // Closes the if (!finalPath) block
+  } 
 
   const path = finalPath;
   if (!path || (path.length === 0 && !isVertical)) {
@@ -675,7 +674,7 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
 
         const blocker = tokenAt(startGrid.x, startGrid.y, targetToken.id);
         if (blocker && (blocker.document.elevation ?? 0) === stepElev) {
-          // --- NEW: Save position ---
+          
           undoOps.push({ op: 'update', uuid: blocker.document.uuid, data: { x: blocker.document.x, y: blocker.document.y, elevation: blocker.document.elevation ?? 0 }, options: { animate: false, teleport: true } });
           if (!noCollisionDamage) await applyDamage(targetToken.actor, remaining + bonusCreatureDmg);
           if (!noCollisionDamage) await applyDamage(blocker.actor, remaining + bonusCreatureDmg);
@@ -692,7 +691,7 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
         ? await applyFallDamage(targetToken, finalElev, startGrid, agility, canFly, undoOps, collisionMsgs, fallReduction, noFallDamage)
         : finalElev;
 
-      // Poll until elevation animation settles before creating the undo message.
+      
       {
         const deadline = Date.now() + 5000;
         while (Date.now() < deadline) {
@@ -701,13 +700,13 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
           await new Promise(r => setTimeout(r, 50));
         }
       }
-      if (FM_DEBUG) {
+      if (getSetting('debugMode')) {
         const live = canvas.scene.tokens.get(targetToken.id);
         console.log(`DSCT | FM | Vert post-poll: live elev=${live?.elevation} | targetElev=${vertTargetElev}`);
       }
 
-      // --- NEW PERSISTENT UNDO LOGIC ---
-      // Use startPos for x/y (vertical path never moves the token horizontally).
+      
+      
       const oldMoveId = targetToken.document.getFlag('draw-steel-combat-tools', 'lastFmMoveId');
       if (oldMoveId) {
         const oldMsg = game.messages.contents.find(m => m.getFlag('draw-steel-combat-tools', 'moveId') === oldMoveId);
@@ -717,15 +716,15 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
       const moveId = foundry.utils.randomID();
       const fullUndoLog = buildUndoLog(targetToken, startPos, startElev, movedSnap, undoOps);
 
-      if (FM_DEBUG) {
+      if (getSetting('debugMode')) {
         const liveSnapV = canvas.scene.tokens.get(targetToken.id);
-        console.log(`DSCT DEBUG | Pre-message snapshot (vert) for ${targetToken.name}: doc.x=${targetToken.document.x}, doc.y=${targetToken.document.y}, doc.elev=${targetToken.document.elevation??0} | live.x=${liveSnapV?.x}, live.y=${liveSnapV?.y}, live.elev=${liveSnapV?.elevation??0} | finalPos will be (${startPos.x},${startPos.y},${vertTargetElev}) | doc===live: ${targetToken.document === liveSnapV}`);
+        console.log(`DSCT | FM | Pre-message snapshot (vert) for ${targetToken.name}: doc.x=${targetToken.document.x}, doc.y=${targetToken.document.y}, doc.elev=${targetToken.document.elevation??0} | live.x=${liveSnapV?.x}, live.y=${liveSnapV?.y}, live.elev=${liveSnapV?.elevation??0} | finalPos will be (${startPos.x},${startPos.y},${vertTargetElev}) | doc===live: ${targetToken.document === liveSnapV}`);
       }
 
       await safeUpdate(targetToken.document, { 'flags.draw-steel-combat-tools.lastFmMoveId': moveId });
 
-      if (FM_DEBUG) {
-        console.log(`DSCT DEBUG | Assigned moveId=${moveId} to ${targetToken.name} (vert). Confirmed lastFmMoveId=${targetToken.document.getFlag('draw-steel-combat-tools','lastFmMoveId')}`);
+      if (getSetting('debugMode')) {
+        console.log(`DSCT | FM | Assigned moveId=${moveId} to ${targetToken.name} (vert). Confirmed lastFmMoveId=${targetToken.document.getFlag('draw-steel-combat-tools','lastFmMoveId')}`);
       }
 
       const vertResultData = {
@@ -750,7 +749,7 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
     const undoOps       = [];
     const collisionMsgs = [];
     let landingIndex    = path.length - 1;
-    let costConsumed    = 0; // extra movement spent breaking through obstacles (beyond the 1 square of movement per step)
+    let costConsumed    = 0; 
     const movedSnap     = snapStamina(targetToken.actor);
 
     for (let i = 0; i < path.length; i++) {
@@ -758,13 +757,13 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
       const prev      = i > 0 ? path[i - 1] : startGrid;
       const remaining = reduced - i - costConsumed;
 
-      // Stop if all movement is consumed (e.g. after paying wall-break costs)
+      
       if (remaining <= 0) {
-        if (FM_DEBUG) console.log(`DSCT | FM | Step ${i}: movement exhausted (reduced=${reduced}, i=${i}, costConsumed=${costConsumed}). Stopping at step ${i - 1}.`);
+        if (getSetting('debugMode')) console.log(`DSCT | FM | Step ${i}: movement exhausted (reduced=${reduced}, i=${i}, costConsumed=${costConsumed}). Stopping at step ${i - 1}.`);
         landingIndex = i - 1;
         break;
       }
-      if (FM_DEBUG) console.log(`DSCT | FM | Step ${i}: remaining=${remaining}, costConsumed=${costConsumed}, pos=(${step.x},${step.y})`);
+      if (getSetting('debugMode')) console.log(`DSCT | FM | Step ${i}: remaining=${remaining}, costConsumed=${costConsumed}, pos=(${step.x},${step.y})`);
 
       const stepElev  = isVertical && reduced > 0
         ? startElev + Math.round(reducedVert * (i + 1) / reduced)
@@ -792,13 +791,13 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
         const wallBottom = wall.flags?.['wall-height']?.bottom ?? 0;
         const wallTop    = wall.flags?.['wall-height']?.top    ?? Infinity;
         if (!(stepElev >= wallTop || stepElev < wallBottom)) {
-          // Bug 3: any wall without the 'obstacle' tag is an indestructible hard stop.
-          // Only walls tagged 'obstacle' (with a material tag) are breakable wall-blocks.
+          
+          
           if (!hasTags(wall, 'obstacle')) {
             landingIndex = i - 1;
             const dmg = 2 + remaining + bonusObjectDmg;
             if (!noCollisionDamage) await applyDamage(targetToken.actor, dmg);
-            if (FM_DEBUG) console.log(`DSCT | FM | Hit indestructible wall (no 'obstacle' tag) at step ${i}. dmg=${dmg}`);
+            if (getSetting('debugMode')) console.log(`DSCT | FM | Hit indestructible wall (no 'obstacle' tag) at step ${i}. dmg=${dmg}`);
             collisionMsgs.push(`${targetToken.name} hits a wall and takes <strong>${dmg} damage</strong>.`);
             break;
           }
@@ -811,7 +810,7 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
               landingIndex = i - 1;
               const dmg = 2 + remaining + bonusObjectDmg;
               if (!noCollisionDamage) await applyDamage(targetToken.actor, dmg);
-              if (FM_DEBUG) console.log(`DSCT | FM | Stopped by non-breakable obstacle wall at step ${i}. dmg=${dmg}`);
+              if (getSetting('debugMode')) console.log(`DSCT | FM | Stopped by non-breakable obstacle wall at step ${i}. dmg=${dmg}`);
               collisionMsgs.push(`${targetToken.name} hits a wall and takes <strong>${dmg} damage</strong>.`);
               break;
             }
@@ -870,12 +869,12 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
               }
               collisionMsgs.push(`${targetToken.name} smashes through ${mat} (costs ${rule.cost}, deals ${rule.damage} damage).`);
               costConsumed += rule.cost - 1;
-              if (FM_DEBUG) console.log(`DSCT | FM | Broke wall (${mat}) at step ${i}. cost=${rule.cost}, costConsumed now=${costConsumed}, remaining after break=${remaining - rule.cost}`);
+              if (getSetting('debugMode')) console.log(`DSCT | FM | Broke wall (${mat}) at step ${i}. cost=${rule.cost}, costConsumed now=${costConsumed}, remaining after break=${remaining - rule.cost}`);
               continue;
             }
 
             landingIndex = i - 1;
-            if (FM_DEBUG) console.log(`DSCT | FM | Blocked by ${mat} wall at step ${i} (needs ${rule.cost}, has ${remaining}). Landing at step ${i - 1}.`);
+            if (getSetting('debugMode')) console.log(`DSCT | FM | Blocked by ${mat} wall at step ${i} (needs ${rule.cost}, has ${remaining}). Landing at step ${i - 1}.`);
             collisionMsgs.push(`${targetToken.name} hits ${mat} but lacks the momentum to break through (needs ${rule.cost}, has ${remaining}). Takes <strong>${dmg} damage</strong>.`);
             break;
           }
@@ -885,7 +884,7 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
       const blocker = tokenAt(step.x, step.y, targetToken.id);
       if (blocker) {
         landingIndex = i - 1;
-        // --- NEW: Save position ---
+        
         undoOps.push({ op: 'update', uuid: blocker.document.uuid, data: { x: blocker.document.x, y: blocker.document.y, elevation: blocker.document.elevation ?? 0 }, options: { animate: false, teleport: true } });
         const movedSquadGroup   = getSquadGroup(targetToken.actor);
         const blockerSquadGroup = getSquadGroup(blocker.actor);
@@ -959,18 +958,18 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
             }
             collisionMsgs.push(`${targetToken.name} smashes through ${mat} (costs ${rule.cost}, deals ${rule.damage} damage).`);
             costConsumed += rule.cost - 1;
-            if (FM_DEBUG) console.log(`DSCT | FM | Broke tile (${mat}) at step ${i}. cost=${rule.cost}, costConsumed now=${costConsumed}, remaining after break=${remaining - rule.cost}`);
+            if (getSetting('debugMode')) console.log(`DSCT | FM | Broke tile (${mat}) at step ${i}. cost=${rule.cost}, costConsumed now=${costConsumed}, remaining after break=${remaining - rule.cost}`);
             continue;
           }
 
           landingIndex = i - 1;
-          if (FM_DEBUG) console.log(`DSCT | FM | Blocked by ${mat} tile at step ${i} (needs ${rule.cost}, has ${remaining}). Landing at step ${i - 1}.`);
+          if (getSetting('debugMode')) console.log(`DSCT | FM | Blocked by ${mat} tile at step ${i} (needs ${rule.cost}, has ${remaining}). Landing at step ${i - 1}.`);
           collisionMsgs.push(`${targetToken.name} hits ${mat} but lacks the momentum to break through (needs ${rule.cost}, has ${remaining}). Takes <strong>${dmg} damage</strong>.`);
           break;
         }
       }
     }
-    if (FM_DEBUG) console.log(`DSCT | FM | Path loop done. landingIndex=${landingIndex}, path.length=${path.length}, costConsumed=${costConsumed}`);
+    if (getSetting('debugMode')) console.log(`DSCT | FM | Path loop done. landingIndex=${landingIndex}, path.length=${path.length}, costConsumed=${costConsumed}`);
 
     const landingGrid      = landingIndex >= 0 ? path[landingIndex] : startGrid;
     const landingStepIndex = landingIndex >= 0 ? landingIndex : -1;
@@ -981,10 +980,10 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
       const stepElev  = isVertical && reduced > 0
         ? startElev + Math.round(reducedVert * (s + 1) / reduced)
         : startElev;
-      // Update elevation before position so Foundry's wall check runs against the
-      // already-raised elevation. If x/y and elevation are updated together, Foundry
-      // checks the wall using the token's old (pre-update) elevation, blocking passage
-      // over walls the token has already risen above.
+      
+      
+      
+      
       if (isVertical && stepElev !== (targetToken.document.elevation ?? 0)) {
         await safeUpdate(targetToken.document, { elevation: stepElev });
       }
@@ -994,17 +993,17 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
     const finalElev = isVertical && reduced > 0
       ? startElev + Math.round(reducedVert * (landingStepIndex + 1) / reduced)
       : startElev;
-    // applyFallDamage returns the elevation the token will settle at (may differ from
-    // finalElev if the token falls to ground after being launched upward).
+    
+    
     const targetElev = await applyFallDamage(targetToken, finalElev, landingGrid, agility, canFly, undoOps, collisionMsgs, fallReduction, noFallDamage);
-    if (FM_DEBUG) console.log(`DSCT | FM | finalElev=${finalElev}, targetElev=${targetElev} (after fall)`);
+    if (getSetting('debugMode')) console.log(`DSCT | FM | finalElev=${finalElev}, targetElev=${targetElev} (after fall)`);
 
-    // --- NEW PERSISTENT UNDO LOGIC ---
-    // Use the computed landing world coordinates for finalPos rather than reading from the document.
+    
+    
     const landingWorld = stepsToAnimate.length > 0 ? toWorld(landingGrid) : startPos;
 
-    // Poll until the token reaches its destination (x, y, AND elevation) before creating the
-    // undo message. Foundry v13 animates all three through intermediate frames.
+    
+    
     {
       const destX = landingWorld.x;
       const destY = landingWorld.y;
@@ -1018,7 +1017,7 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
         await new Promise(r => setTimeout(r, 50));
       }
     }
-    if (FM_DEBUG) {
+    if (getSetting('debugMode')) {
       const live = canvas.scene.tokens.get(targetToken.id);
       console.log(`DSCT | FM | Post-poll: live(${live?.x},${live?.y},elev=${live?.elevation}) | landing(${landingWorld.x},${landingWorld.y},elev=${targetElev})`);
     }
@@ -1032,15 +1031,15 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
     const moveId = foundry.utils.randomID();
     const fullUndoLog = buildUndoLog(targetToken, startPos, startElevSnap, movedSnap, undoOps);
 
-    if (FM_DEBUG) {
+    if (getSetting('debugMode')) {
       const liveSnap = canvas.scene.tokens.get(targetToken.id);
-      console.log(`DSCT DEBUG | Pre-message snapshot for ${targetToken.name}: doc.x=${targetToken.document.x}, doc.y=${targetToken.document.y}, doc.elev=${targetToken.document.elevation??0} | live.x=${liveSnap?.x}, live.y=${liveSnap?.y}, live.elev=${liveSnap?.elevation??0} | finalPos will be (${landingWorld.x},${landingWorld.y},${targetElev}) | doc===live: ${targetToken.document === liveSnap}`);
+      console.log(`DSCT | FM | Pre-message snapshot for ${targetToken.name}: doc.x=${targetToken.document.x}, doc.y=${targetToken.document.y}, doc.elev=${targetToken.document.elevation??0} | live.x=${liveSnap?.x}, live.y=${liveSnap?.y}, live.elev=${liveSnap?.elevation??0} | finalPos will be (${landingWorld.x},${landingWorld.y},${targetElev}) | doc===live: ${targetToken.document === liveSnap}`);
     }
 
     await safeUpdate(targetToken.document, { 'flags.draw-steel-combat-tools.lastFmMoveId': moveId });
 
-    if (FM_DEBUG) {
-      console.log(`DSCT DEBUG | Assigned moveId=${moveId} to ${targetToken.name}. Confirmed lastFmMoveId=${targetToken.document.getFlag('draw-steel-combat-tools','lastFmMoveId')}`);
+    if (getSetting('debugMode')) {
+      console.log(`DSCT | FM | Assigned moveId=${moveId} to ${targetToken.name}. Confirmed lastFmMoveId=${targetToken.document.getFlag('draw-steel-combat-tools','lastFmMoveId')}`);
     }
 
     const mainResultData = {
@@ -1182,7 +1181,7 @@ export async function runForcedMovement(macroArgs = []) {
   }
 }
 
-// --- SHARED UI STYLING UTILS ---
+
 const SCALE = 1.2;
 const s = n => Math.round(n * SCALE);
 const palette = () => document.body.classList.contains('theme-dark') ? {
@@ -1197,7 +1196,7 @@ const palette = () => document.body.classList.contains('theme-dark') ? {
   accent: '#7a50c0', accentRed: '#a03030', accentGreen: '#206040',
 };
 
-// --- NEW PERSISTENT FORCED MOVEMENT PANEL ---
+
 export class ForcedMovementPanel extends Application {
   constructor() {
     super();
@@ -1205,7 +1204,7 @@ export class ForcedMovementPanel extends Application {
     this._sourceToken = null;
     this._targetToken = null;
     this._targetTokens = [];
-    this._multiMode = false; // Tracks if we are in Multi-Target mode
+    this._multiMode = false; 
     this._updatePreview();
   }
 
@@ -1229,21 +1228,21 @@ export class ForcedMovementPanel extends Application {
     this._updatePreview();
     const p = palette();
 
-    // 1. Update Source Token
+    
     const sourceImg  = this._html.find('#fm-source-img')[0];
     const sourceName = this._html.find('#fm-source-name')[0];
     if (sourceImg)  sourceImg.src = this._sourceToken?.document.texture.src ?? 'icons/svg/mystery-man.svg';
     if (sourceName) { sourceName.textContent = this._sourceToken?.name ?? 'No Source'; sourceName.style.color = this._sourceToken ? p.text : p.textDim; }
 
-    // 2. Update Target Container (Dynamically builds Grid or Single Image)
+    
     const targetContainer = this._html.find('#fm-target-container')[0];
     if (targetContainer) {
       if (this._multiMode) {
-        // Multi-Mode: 3x3 Grid
+        
         const displayTargets = this._targetTokens.slice(0, 9);
         const gridItems = displayTargets.map(t => `<img src="${t.document.texture.src}" style="width:${s(13)}px;height:${s(13)}px;border-radius:2px;object-fit:cover;border:1px solid ${p.border};background:${p.bg};" title="${t.name}">`).join('');
         
-        // Fill empty slots so the grid always maintains its shape
+        
         const emptySlots = Math.max(0, 9 - displayTargets.length);
         const emptyItems = Array(emptySlots).fill(`<div style="width:${s(13)}px;height:${s(13)}px;border-radius:2px;border:1px dashed ${p.borderOuter};"></div>`).join('');
         
@@ -1254,7 +1253,7 @@ export class ForcedMovementPanel extends Application {
           <div style="font-size:${s(8)}px;color:${displayTargets.length ? p.text : p.textDim};text-align:center;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:${s(2)}px;">${displayTargets.length} Target${displayTargets.length !== 1 ? 's' : ''}</div>
         `;
       } else {
-        // Single-Mode: Large Icon
+        
         const targetSrc   = this._targetToken?.document.texture.src ?? 'icons/svg/mystery-man.svg';
         const targetLabel = this._targetToken?.name ?? 'No Target';
         targetContainer.innerHTML = `
@@ -1264,7 +1263,7 @@ export class ForcedMovementPanel extends Application {
       }
     }
 
-    // 3. Update Toggle Button Color
+    
     const toggleBtn = this._html.find('[data-action="toggle-multi"]')[0];
     if (toggleBtn) {
       toggleBtn.style.color = this._multiMode ? p.accent : p.textDim;
@@ -1289,7 +1288,7 @@ export class ForcedMovementPanel extends Application {
     const sourceSrc   = this._sourceToken?.document.texture.src ?? 'icons/svg/mystery-man.svg';
     const sourceLabel = this._sourceToken?.name ?? 'No Source';
     
-    // Initial render state for target container
+    
     const targetSrc   = this._targetToken?.document.texture.src ?? 'icons/svg/mystery-man.svg';
     const targetLabel = this._targetToken?.name ?? 'No Target';
 
@@ -1397,7 +1396,7 @@ export class ForcedMovementPanel extends Application {
     this._themeObserver = new MutationObserver(() => this._refreshPanel());
     this._themeObserver.observe(document.body, { attributeFilter: ['class'] });
 
-    // --- NEW: DYNAMIC BUTTON TEXT ---
+    
     const updateExecButton = () => {
       const type = html.find('#fm-type').val() || 'Move';
       const dist = html.find('#fm-dist').val() || '1';
@@ -1405,7 +1404,7 @@ export class ForcedMovementPanel extends Application {
       html.find('#fm-exec-text').text(`Execute ${isVert ? 'Vertical ' : ''}${type} ${dist}`);
     };
     html.find('input, select').on('change input', updateExecButton);
-    updateExecButton(); // Run once on load to set initial state
+    updateExecButton(); 
 
     html.on('click', '[data-action]', async e => {
       const action = e.currentTarget.dataset.action;
@@ -1449,14 +1448,14 @@ export class ForcedMovementPanel extends Application {
           const payload = { type, distance, sourceId: this._sourceToken?.id, verticalHeight, fallReduction, noFallDamage, noCollisionDamage, ignoreStability, fastMove };
 
           if (targetsToProcess.length === 1) {
-            // Single target: message posted inside the engine as normal
+            
             await api.forcedMovement({ ...payload, targetId: targetsToProcess[0].id });
           } else {
-            // Multiple targets: collect results and post one combined message
+            
             const results = [];
             for (const t of targetsToProcess) {
               const result = await api.forcedMovement({ ...payload, targetId: t.id, suppressMessage: true });
-              if (result) results.push(result); // undefined = stability fully blocked or path cancelled
+              if (result) results.push(result); 
             }
             if (results.length === 0) return;
             await ChatMessage.create({
@@ -1494,18 +1493,17 @@ export const toggleForcedMovementPanel = () => {
     new ForcedMovementPanel().render(true);
   }
 };
-// Shared helper: handle death/revival side-effects for a single undoLog's stamina ops.
-// Returns an array of token names that were revived from death.
+
 const handleStaminaRevival = async (undoLog) => {
   const staminaOps   = undoLog.filter(op => op.op === 'stamina');
   const revivedNames = [];
 
-  // Collect all token IDs that need revival consideration.
-  // Use a Map keyed by token ID so duplicates are deduplicated.
+  
+  
   const tokensToRevive = new Map();
 
   for (const op of staminaOps) {
-    // Direct token for the stamina op's actor.
+    
     const actor = await fromUuid(op.uuid);
     if (actor) {
       if (actor.isToken) {
@@ -1516,8 +1514,8 @@ const handleStaminaRevival = async (undoLog) => {
       }
     }
 
-    // Squad members: use token IDs (persist even after combatant deletion) so dead
-    // minions removed from combat are still found.
+    
+    
     const tokenIds = Array.isArray(op.squadTokenIds) ? op.squadTokenIds : [];
     for (const tid of tokenIds) {
       if (!tokensToRevive.has(tid)) {
@@ -1527,7 +1525,7 @@ const handleStaminaRevival = async (undoLog) => {
     }
   }
 
-  // Process each token strictly sequentially so database updates don't collide.
+  
   for (const tokenDoc of tokensToRevive.values()) {
     if (!tokenDoc || !tokenDoc.actor) continue;
 
@@ -1537,21 +1535,21 @@ const handleStaminaRevival = async (undoLog) => {
     const isDead  = tokenDoc.actor.statuses?.has('dead');
     const isDying = tokenDoc.actor.statuses?.has('dying');
 
-    // Only act if this token actually died — skip living squad members.
+    
     if (!isDead && !isDying && skulls.length === 0) continue;
 
-    // 1. Remove status effects first so the actor is "alive" before we move the token.
+    
     if (isDead)  await safeToggleStatusEffect(tokenDoc.actor, 'dead',  { active: false });
     if (isDying) await safeToggleStatusEffect(tokenDoc.actor, 'dying', { active: false });
 
-    // 2. For each skull: teleport token to its location, confirm arrival, THEN delete skull.
+    
     for (const skull of skulls) {
       const gx = Math.floor(skull.x / canvas.grid.size) * canvas.grid.size;
       const gy = Math.floor(skull.y / canvas.grid.size) * canvas.grid.size;
 
       await safeUpdate(tokenDoc, { x: gx, y: gy }, { animate: false, teleport: true });
 
-      // Wait until the live canvas token confirms the position before deleting the skull.
+      
       const deadline = Date.now() + 2000;
       while (Date.now() < deadline) {
         const live = canvas.scene.tokens.get(tokenDoc.id);
@@ -1564,9 +1562,9 @@ const handleStaminaRevival = async (undoLog) => {
 
     if (tokenDoc.hidden) await safeUpdate(tokenDoc, { hidden: false });
 
-    // 3. Restore combatant in active combat (death tracker deletes it; recreate in original group).
-    // Do NOT bump squad staminaValue here — replayUndo already restored it to the pre-collision
-    // value via the stamina op. Adding minionMaxHP again would double-count it.
+    
+    
+    
     if (game.combat && !game.combat.combatants.find(c => c.tokenId === tokenDoc.id)) {
       const savedGroupId = tokenDoc.getFlag('draw-steel-combat-tools', 'savedGroupId');
       const combatantData = { tokenId: tokenDoc.id, sceneId: canvas.scene.id, actorId: tokenDoc.actorId };
@@ -1575,7 +1573,7 @@ const handleStaminaRevival = async (undoLog) => {
       if (savedGroupId) await tokenDoc.unsetFlag('draw-steel-combat-tools', 'savedGroupId');
     }
 
-    // 4. Clean up old death chat messages.
+    
     const deathMsgs = game.messages.filter(m =>
       m.getFlag('draw-steel-combat-tools', 'isDeathMessage') &&
       m.getFlag('draw-steel-combat-tools', 'deadTokenId') === tokenDoc.id
@@ -1588,36 +1586,36 @@ const handleStaminaRevival = async (undoLog) => {
   return revivedNames;
 };
 
-// Shared helper: check whether a single message entry is expired.
+
 const isEntryExpired = (entry) => {
   if (canvas.scene?.id !== entry.targetSceneId) {
-    if (FM_DEBUG) console.log(`DSCT DEBUG | EXPIRED (scene mismatch) targetScene=${entry.targetSceneId} currentScene=${canvas.scene?.id}`);
+    if (getSetting('debugMode')) console.log(`DSCT | FM | EXPIRED (scene mismatch) targetScene=${entry.targetSceneId} currentScene=${canvas.scene?.id}`);
     return true;
   }
   const token = canvas.scene.tokens.get(entry.targetTokenId);
   if (!token) {
-    if (FM_DEBUG) console.log(`DSCT DEBUG | EXPIRED (token deleted) targetTokenId=${entry.targetTokenId}`);
+    if (getSetting('debugMode')) console.log(`DSCT | FM | EXPIRED (token deleted) targetTokenId=${entry.targetTokenId}`);
     return true;
   }
   const lastMoveId = token.getFlag('draw-steel-combat-tools', 'lastFmMoveId');
   if (lastMoveId && lastMoveId !== entry.moveId) {
-    if (FM_DEBUG) console.log(`DSCT DEBUG | EXPIRED (moveId mismatch) msg=${entry.moveId} token=${lastMoveId} | target=${token.name}`);
+    if (getSetting('debugMode')) console.log(`DSCT | FM | EXPIRED (moveId mismatch) msg=${entry.moveId} token=${lastMoveId} | target=${token.name}`);
     return true;
   }
   if (entry.finalPos) {
     const isDead = token.actor?.statuses?.has('dead') || token.hidden;
     if (!isDead) {
       const posMatch = token.x === entry.finalPos.x && token.y === entry.finalPos.y && (token.elevation ?? 0) === entry.finalPos.elevation;
-      if (FM_DEBUG) console.log(`DSCT DEBUG | Position check for ${token.name}: token(${token.x},${token.y},${token.elevation??0}) vs finalPos(${entry.finalPos.x},${entry.finalPos.y},${entry.finalPos.elevation}) | match=${posMatch} | isDead=${isDead} | moveId=${entry.moveId}`);
+      if (getSetting('debugMode')) console.log(`DSCT | FM | Position check for ${token.name}: token(${token.x},${token.y},${token.elevation??0}) vs finalPos(${entry.finalPos.x},${entry.finalPos.y},${entry.finalPos.elevation}) | match=${posMatch} | isDead=${isDead} | moveId=${entry.moveId}`);
       if (!posMatch) return true;
     } else {
-      if (FM_DEBUG) console.log(`DSCT DEBUG | Skipping pos check for ${token.name}: isDead=${isDead} finalPos=${JSON.stringify(entry.finalPos)}`);
+      if (getSetting('debugMode')) console.log(`DSCT | FM | Skipping pos check for ${token.name}: isDead=${isDead} finalPos=${JSON.stringify(entry.finalPos)}`);
     }
   }
   return false;
 };
 
-// --- FORCED MOVEMENT CHAT UI HOOK (With Death-Tracker Cross-Integration) ---
+
 export const registerForcedMovementHooks = () => {
   const STATUS_STYLE = 'text-align: center; color: var(--color-text-dark-secondary); font-style: italic; font-size: 11px; padding: 4px; border: 1px dashed var(--color-border-dark-4); border-radius: 3px;';
 
@@ -1630,7 +1628,7 @@ export const registerForcedMovementHooks = () => {
     const hadDamage  = msg.getFlag('draw-steel-combat-tools', 'hadDamage');
     const container  = $('<div class="dsct-fm-undo-container" style="margin-top: 4px;"></div>');
 
-    // ── COMBINED MULTI-TARGET MESSAGE ────────────────────────────────────────
+    
     if (isCombined) {
       const entries   = msg.getFlag('draw-steel-combat-tools', 'entries') ?? [];
       let isExpired   = msg.getFlag('draw-steel-combat-tools', 'isExpired') ?? false;
@@ -1667,7 +1665,7 @@ export const registerForcedMovementHooks = () => {
       return;
     }
 
-    // ── SINGLE-TARGET MESSAGE ────────────────────────────────────────────────
+    
     let isExpired = msg.getFlag('draw-steel-combat-tools', 'isExpired') ?? false;
     if (!isExpired) {
       isExpired = isEntryExpired({

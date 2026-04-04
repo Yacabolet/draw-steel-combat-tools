@@ -1,13 +1,13 @@
-import { safeCreateEmbedded, safeDelete } from './helpers.js';
+﻿import { safeCreateEmbedded, safeDelete } from './helpers.js';
 
 const JUDGEMENT_BASE_ORIGIN = 'dsct-judgement';
 const MARK_BASE_ORIGIN = 'dsct-mark';
 
-// Appends the current user's ID so multiple players can play Censors/Tacticians independently
+
 const getJudgementOrigin = () => `${JUDGEMENT_BASE_ORIGIN}-${game.user.id}`;
 const getMarkOrigin = () => `${MARK_BASE_ORIGIN}-${game.user.id}`;
 
-// Searches the current scene for the specific user's existing mark/judgement and deletes it
+
 const removeExistingEffectGlobal = async (origin) => {
   const existing = game.actors.contents
     .flatMap(a => [...a.effects])
@@ -58,9 +58,7 @@ export const applyMark = async () => {
   await ChatMessage.create({ content: `<strong>Mark:</strong> ${targetToken.name} is marked.` });
 };
 
-// ==========================================
-// DEATH LISTENER HOOKS
-// ==========================================
+
 
 const recentlyProcessed = new Set();
 const shouldTrigger = (key) => {
@@ -95,7 +93,7 @@ const handleActorDeath = (actor) => {
   );
 
   for (const effect of relevantEffects) {
-    // Check the ID appended to the origin to ensure only the person who cast it gets the proc
+    
     const ownerId = effect.origin.split('-')[2];
     if (game.user.id === ownerId) {
       if (!shouldTrigger(`${actor.id}-${effect.id}`)) continue;
