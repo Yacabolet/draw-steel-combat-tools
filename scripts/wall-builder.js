@@ -337,17 +337,17 @@ export class WallBuilderPanel extends Application {
       if (ev) { tooltip.style.left = `${ev.clientX + 14}px`; tooltip.style.top = `${ev.clientY + 14}px`; }
     };
 
-    const cleanup = () => {
-      overlay.off('pointermove', onMove);
-      document.removeEventListener('keydown', onKeyDown);
-      canvas.app.stage.removeChild(overlay);
-      canvas.app.stage.removeChild(graphics);
-      graphics.destroy();
-      overlay.destroy();
-      tooltip.remove();
-    };
-
     return new Promise((resolve) => {
+      const cleanup = () => {
+        overlay.off('pointermove', onMove);
+        document.removeEventListener('keydown', onKeyDown);
+        canvas.app.stage.removeChild(overlay);
+        canvas.app.stage.removeChild(graphics);
+        graphics.destroy();
+        overlay.destroy();
+        tooltip.remove();
+      };
+
       const onKeyDown = (e) => { if (e.key === 'Escape') { cleanup(); resolve(); } };
       overlay.on('pointermove', onMove);
       document.addEventListener('keydown', onKeyDown);
