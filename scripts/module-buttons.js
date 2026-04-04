@@ -1,10 +1,10 @@
-﻿export const registerModuleButtons = () => {
+export const registerModuleButtons = () => {
   Hooks.on('getSceneControlButtons', (controls) => {
-    
     const tokenControl = controls.tokens || controls.token;
     if (!tokenControl) return;
 
     const getApi = () => game.modules.get('draw-steel-combat-tools')?.api;
+    const S = (key) => game.settings.get('draw-steel-combat-tools', key);
 
     const myTools = {
       'dsct-grab': {
@@ -12,7 +12,7 @@
         title: 'Grab Panel',
         icon: 'fas fa-hand-rock',
         button: true,
-        visible: true,
+        visible: S('grabEnabled') && S('showGrabButton'),
         onClick: () => getApi()?.grabPanel()
       },
       'dsct-forced-movement': {
@@ -20,15 +20,15 @@
         title: 'Forced Movement',
         icon: 'fas fa-arrows-alt',
         button: true,
-        visible: true,
+        visible: S('forcedMovementEnabled') && S('showForcedMovementButton'),
         onClick: () => getApi()?.forcedMovementUI()
       },
       'dsct-teleport': {
         name: 'dsct-teleport',
         title: 'Teleport',
-        icon: 'fas fa-magic',
+        icon: 'fa-solid fa-person-through-window',
         button: true,
-        visible: game.settings.get('draw-steel-combat-tools', 'teleportEnabled'),
+        visible: S('teleportEnabled') && S('showTeleportButton'),
         onClick: () => getApi()?.teleportUI()
       },
       'dsct-wall': {
@@ -36,7 +36,7 @@
         title: 'Wall Builder',
         icon: 'fas fa-dungeon',
         button: true,
-        visible: game.user.isGM,
+        visible: game.user.isGM && S('showWallBuilderButton'),
         onClick: () => getApi()?.wallBuilder()
       },
       'dsct-pwk': {
@@ -44,7 +44,7 @@
         title: 'Power Word: Kill',
         icon: 'fas fa-skull',
         button: true,
-        visible: game.user.isGM,
+        visible: game.user.isGM && S('showPowerWordKillButton'),
         onClick: () => getApi()?.powerWordKill()
       }
     };

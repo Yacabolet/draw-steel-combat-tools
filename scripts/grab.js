@@ -7,6 +7,17 @@ const s          = n => Math.round(n * SCALE);
 const sizeRankG = (size) =>
   size.value >= 2 ? size.value + 2 : ({ T: 0, S: 1, M: 2, L: 3 })[size.letter] ?? 2;
 
+const SIZE_EDGE_EFFECT = {
+  name: 'Size Advantage (Grab)',
+  img: 'icons/skills/social/diplomacy-handshake-blue.webp',
+  type: 'base',
+  system: { end: { type: 'encounter', roll: '1d10 + @combat.save.bonus' } },
+  changes: [{ key: 'system.combat.targetModifiers.edges', mode: 2, value: '1', priority: null }],
+  disabled: false,
+  duration: { startTime: 0, combat: null, seconds: null, rounds: null, turns: null, startRound: 0, startTurn: 0 },
+  description: '', tint: '#ffffff', transfer: false, statuses: [], sort: 0, flags: {},
+};
+
 export const buildFreeStrikeButton = (actor) => {
   const item = actor?.items.find(i => i.name.toLowerCase().includes('melee free strike'));
   if (item) return `<a onclick="ds.helpers.macros.rollItemMacro('${item.uuid}')" style="cursor:pointer;">Melee Free Strike</a>`;
@@ -255,16 +266,9 @@ export const runGrab = async (grabberToken, targetToken, { forceApply = false, t
 
   let sizeEdgeEffectId = null;
   if (sizeEdge > 0) {
-    const aidEdgeUuid = getSetting('aidEdgeUuid');
-    if (aidEdgeUuid) {
-      const edgeSource = await fromUuid(aidEdgeUuid);
-      if (edgeSource) {
-        const d = edgeSource.toObject(); d.name = 'Size Advantage (Grab)';
-        const [c] = await safeCreateEmbedded(grabberActor, 'ActiveEffect', [d]);
-        sizeEdgeEffectId = c?.id;
-        await new Promise(r => setTimeout(r, 300));
-      }
-    }
+    const [c] = await safeCreateEmbedded(grabberActor, 'ActiveEffect', [foundry.utils.deepClone(SIZE_EDGE_EFFECT)]);
+    sizeEdgeEffectId = c?.id;
+    await new Promise(r => setTimeout(r, 300));
   }
 
   const resolvedTier = await new Promise((resolve) => {

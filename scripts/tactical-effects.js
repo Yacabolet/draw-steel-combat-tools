@@ -1,7 +1,19 @@
 ﻿import { safeCreateEmbedded, safeDelete } from './helpers.js';
 
 const JUDGEMENT_BASE_ORIGIN = 'dsct-judgement';
-const MARK_BASE_ORIGIN = 'dsct-mark';
+const MARK_BASE_ORIGIN      = 'dsct-mark';
+const AID_ATTACK_ORIGIN     = 'dsct-aid-attack';
+
+const AID_ATTACK_EFFECT = {
+  name: 'Aid Attack (Target)',
+  img: 'icons/skills/social/diplomacy-handshake-blue.webp',
+  type: 'base',
+  system: { end: { type: 'encounter', roll: '1d10 + @combat.save.bonus' } },
+  changes: [{ key: 'system.combat.targetModifiers.edges', mode: 2, value: '1', priority: null }],
+  disabled: false,
+  duration: { startTime: 0, combat: null, seconds: null, rounds: null, turns: null, startRound: 0, startTurn: 0 },
+  description: '', tint: '#ffffff', transfer: false, statuses: [], sort: 0, flags: {},
+};
 
 
 const getJudgementOrigin = () => `${JUDGEMENT_BASE_ORIGIN}-${game.user.id}`;
@@ -100,6 +112,51 @@ const handleActorDeath = (actor) => {
       triggerProc(actor, effect);
     }
   }
+};
+
+export const applyAidAttack = async () => {
+  const selected = canvas.tokens.controlled;
+  if (selected.length !== 1) { ui.notifications.warn('Select exactly one token before using Aid Attack.'); return; }
+
+  const targets = [...game.user.targets];
+  if (targets.length !== 1) { ui.notifications.warn('Target exactly one adjacent enemy before using Aid Attack.'); return; }
+
+  const targetToken = targets[0];
+  const targetActor = targetToken.actor;
+  const targetTokenId = targetToken.id;
+
+  const existing = targetActor.effects.find(e => e.origin === AID_ATTACK_ORIGIN);
+  if (existing) await safeDelete(existing);
+
+  const effectData = foundry.utils.deepClone(AID_ATTACK_EFFECT);
+  effectData.origin = AID_ATTACK_ORIGIN;
+  await safeCreateEmbedded(targetActor, 'ActiveEffect', [effectData]);
+
+  await ChatMessage.create({ content: `<strong>Aid Attack:</strong> The next ally ability roll against <strong>${targetActor.name}</strong> has an edge.` });
+
+  let rollHookId, combatEndHookId;
+
+  const cleanup = async (reason) => {
+    Hooks.off('createChatMessage', rollHookId);
+    Hooks.off('deleteCombat', combatEndHookId);
+    const effect = targetActor.effects.find(e => e.origin === AID_ATTACK_ORIGIN);
+    if (effect) await safeDelete(effect);
+    ui.notifications.info(`Aid Attack on ${targetActor.name} cleared - ${reason}.`);
+  };
+
+  rollHookId = Hooks.on('createChatMessage', async (message) => {
+    if (!message.rolls?.length) return;
+    if (message.rolls[0].options?.type !== 'test') return;
+    const allTargets = game.users.contents.flatMap(u => [...u.targets]);
+    if (!allTargets.some(t => t.id === targetTokenId)) return;
+    await cleanup(`${message.speaker.alias} rolled against ${targetActor.name}`);
+  });
+
+  combatEndHookId = Hooks.on('deleteCombat', async () => {
+    await cleanup('combat ended');
+  });
+
+  ui.notifications.info(`Aid Attack applied to ${targetActor.name}.`);
 };
 
 export const registerTacticalHooks = () => {
