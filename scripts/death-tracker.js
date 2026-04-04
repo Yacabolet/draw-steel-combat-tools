@@ -122,8 +122,6 @@ export function registerDeathTrackerHooks() {
       }
 
       await new Promise(r => setTimeout(r, 150));
-      
-      if (token._controlled) token.release();
 
       const gravePos = getGraveyardPosition(token.document);
       await token.document.update({ hidden: true, alpha: 1, 'texture.tint': '#ffffff' });

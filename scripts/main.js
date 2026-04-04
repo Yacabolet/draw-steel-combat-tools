@@ -1,4 +1,4 @@
-import { runForcedMovement, toggleForcedMovementPanel } from './forced-movement.js';
+import { runForcedMovement, toggleForcedMovementPanel, registerForcedMovementHooks } from './forced-movement.js';
 import { WallBuilderPanel } from './wall-builder.js';
 import { WallBuilderSettingsMenu, MATERIAL_RULE_DEFAULTS, WALL_RESTRICTION_DEFAULTS } from './wall-builder-settings.js';
 import { registerChatHooks, refreshChatInjections } from './chat-hooks.js';
@@ -10,7 +10,7 @@ import { applySquadLabels, autoRenameGroups, registerSquadLabelHooks } from './s
 import { applyTriggeredActions, registerTriggeredActionHooks } from './triggered-actions.js';
 import { registerModuleButtons } from './module-buttons.js';
 
-const MAIN_VERSION = "v1.3.4 - Configurable Revive";
+const MAIN_VERSION = "v0.3.5 - Undo Expired Fix";
 console.log(`🔴 DSCT DEBUG | Loaded main.js - Version: ${MAIN_VERSION}`);
 
 const api = {
@@ -135,6 +135,7 @@ Hooks.once('init', () => {
   registerSquadLabelHooks();
   registerTriggeredActionHooks();
   registerModuleButtons();
+  registerForcedMovementHooks();
 
   game.keybindings.register('draw-steel-combat-tools', 'refreshChatInjections', {
     name: 'Refresh Chat Forced Movement Buttons', hint: 'Re-injects Execute buttons into any chat messages that have forced movement data.',
@@ -146,10 +147,6 @@ Hooks.once('init', () => {
 Hooks.once('socketlib.ready', () => {
   const socket = socketlib.registerModule('draw-steel-combat-tools');
   api.socket = socket;
-
-  socket.register('setForcedMovementUndo', (undoLog) => {
-    window._forcedMovementUndo = async () => { await replayUndo(undoLog); ui.notifications.info('Forced movement undone.'); };
-  });
 
   socket.register('updateDocument', async (uuid, data, options = {}) => { const doc = await fromUuid(uuid); if (doc) return await doc.update(data, options); });
   socket.register('deleteDocument', async (uuid) => { const doc = await fromUuid(uuid); if (doc) return await doc.delete(); });

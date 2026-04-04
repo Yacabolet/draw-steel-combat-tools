@@ -285,6 +285,8 @@ const applyFallDamage = async (targetToken, finalElev, landingGrid, agility, can
 
       const landedOn = tokenAt(landingGrid.x, landingGrid.y, targetToken.id);
       if (landedOn) {
+        // --- NEW: Save their position so we can pull them out of the graveyard if they die! ---
+        undoOps.push({ op: 'update', uuid: landedOn.document.uuid, data: { x: landedOn.document.x, y: landedOn.document.y, elevation: landedOn.document.elevation ?? 0 }, options: { animate: false, teleport: true } });
         await applyDamage(landedOn.actor, fallDmg);
         collisionMsgs.push(`${landedOn.name} takes <strong>${fallDmg} damage</strong> from the impact.`);
         const fallerSize   = targetToken.actor?.system?.combat?.size?.value ?? 1;
@@ -315,23 +317,12 @@ const applyFallDamage = async (targetToken, finalElev, landingGrid, agility, can
 };
 
 const buildUndoLog = (targetToken, startPos, startElevSnap, movedSnap, undoOps) => [
-  { op: 'update',  uuid: targetToken.document.uuid, data: { x: startPos.x, y: startPos.y, elevation: startElevSnap } },
+  { op: 'update',  uuid: targetToken.document.uuid, data: { x: startPos.x, y: startPos.y, elevation: startElevSnap }, options: { animate: false } },
   { op: 'stamina', uuid: targetToken.actor.uuid, prevValue: movedSnap.prevValue, prevTemp: movedSnap.prevTemp, squadGroupUuid: movedSnap.squadGroup?.uuid ?? null, prevSquadHP: movedSnap.prevSquadHP },
   ...undoOps,
 ];
 
-const commitUndo = async (fullUndoLog) => {
-  window._forcedMovementUndo = async () => {
-    await replayUndo(fullUndoLog);
-    ui.notifications.info('Forced movement undone.');
-  };
-  if (!game.user.isGM) {
-    const socket = game.modules.get('draw-steel-combat-tools').api.socket;
-    await socket.executeAsGM('setForcedMovementUndo', fullUndoLog);
-  }
-};
-
-const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonusCreatureDmg = 0, bonusObjectDmg = 0, verticalHeight = 0, fallReduction = 0, noFallDamage = false, ignoreStability = false, noCollisionDamage = false, keywords = []) => {
+const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonusCreatureDmg = 0, bonusObjectDmg = 0, verticalHeight = 0, fallReduction = 0, noFallDamage = false, ignoreStability = false, noCollisionDamage = false, keywords = [], fastMove = false, suppressMessage = false) => {
   const GRID      = getGRID();
   const stability = ignoreStability ? 0 : (targetToken.actor?.system?.combat?.stability ?? 0);
 
@@ -389,11 +380,81 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
     return summary;
   };
 
-  await new Promise((resolve) => {
-    if (reduced === 0) { resolve([]); return; }
+  // --- NEW: FAST MOVE AUTO-PATHING ---
+  let autoPath = null;
+  if (fastMove && reduced > 0) {
+      if (sourceToken && (type === 'Push' || type === 'Pull')) {
+          let dx = targetToken.center.x - sourceToken.center.x;
+          let dy = targetToken.center.y - sourceToken.center.y;
+          
+		if (dx !== 0 || dy !== 0) {
+                let angle = Math.atan2(dy, dx);
+                if (type === 'Pull') angle += Math.PI;
+                
+                const dirX = Math.cos(angle);
+                const dirY = Math.sin(angle);
+              
+              autoPath = [];
+              let currGrid = { ...startGrid };
+              
+              for (let i = 0; i < reduced; i++) {
+                  const adjacents = [
+                      {x: currGrid.x - 1, y: currGrid.y - 1}, {x: currGrid.x, y: currGrid.y - 1}, {x: currGrid.x + 1, y: currGrid.y - 1},
+                      {x: currGrid.x - 1, y: currGrid.y},                                         {x: currGrid.x + 1, y: currGrid.y},
+                      {x: currGrid.x - 1, y: currGrid.y + 1}, {x: currGrid.x, y: currGrid.y + 1}, {x: currGrid.x + 1, y: currGrid.y + 1}
+                  ];
 
-    const path     = [];
-    const graphics = new PIXI.Graphics();
+                  let bestNext = null;
+                  let bestScore = Infinity;
+
+                  for (const adj of adjacents) {
+                      let distSource = gridDist(adj, sourceGrid);
+                      let currDistSource = gridDist(currGrid, sourceGrid);
+                      
+                      // Push must move further away. Pull must move closer.
+                      if (type === 'Push' && distSource <= currDistSource) continue;
+                      if (type === 'Pull' && distSource >= currDistSource && distSource !== 0) continue;
+
+                      let c = toCenter(adj);
+                      let vx = c.x - targetToken.center.x;
+                      let vy = c.y - targetToken.center.y;
+                      
+                      // Must be progressing forward along the projected ray
+                      let dot = vx * dirX + vy * dirY;
+                      if (dot <= 0.1) continue; 
+
+                      // Find distance from the mathematical line
+                      let cross = Math.abs(vx * dirY - vy * dirX);
+                      
+                      // Score = Cross distance (minimize) - Dot progress (maximize ties)
+                      let score = cross - dot * 0.001; 
+                      
+                      if (score < bestScore) {
+                          bestScore = score;
+                          bestNext = adj;
+                      }
+                  }
+                  
+                  if (!bestNext) break; // Token got trapped by geometry, ending path early
+                  autoPath.push(bestNext);
+                  currGrid = bestNext;
+              }
+          } else {
+              ui.notifications.warn("DSCT | Auto-Path failed: Source and Target are in the exact same spot.");
+          }
+      } else if (type === 'Slide' || type === 'Shift') {
+          ui.notifications.warn(`DSCT | Fast Move is only available for Push and Pull. Falling back to manual pathing.`);
+      }
+  }
+
+  // AutoPath intercepts the Promise! If it failed or wasn't requested, it seamlessly falls back to manual!
+  let finalPath = autoPath;
+  if (!finalPath) {
+    finalPath = await new Promise((resolve) => {
+      if (reduced === 0) { resolve([]); return; }
+
+      const path     = [];
+      const graphics = new PIXI.Graphics();
     canvas.app.stage.addChild(graphics);
 
     const colorPath    = 0x4488ff;
@@ -481,15 +542,16 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
     redraw(null);
     const vertNote = isVertical ? ` vertical ${reducedVert}` : '';
     ui.notifications.info(`${type} ${reduced}${vertNote}: click squares to trace path. Right-click to undo. Enter to confirm. Escape to cancel.`);
+  });
+  } // Closes the if (!finalPath) block
 
-  }).then(async (path) => {
-    if (!path || (path.length === 0 && !isVertical)) {
-      ui.notifications.info('Forced movement cancelled.');
-      return;
-    }
+  const path = finalPath;
+  if (!path || (path.length === 0 && !isVertical)) {
+    ui.notifications.info('Forced movement cancelled.');
+    return;
+  }
 
     if (path.length === 0 && isVertical) {
-      const GRID          = getGRID();
       const startPos      = { x: targetToken.document.x, y: targetToken.document.y };
       const undoOps       = [];
       const collisionMsgs = [];
@@ -521,6 +583,8 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
 
         const blocker = tokenAt(startGrid.x, startGrid.y, targetToken.id);
         if (blocker && (blocker.document.elevation ?? 0) === stepElev) {
+          // --- NEW: Save position ---
+          undoOps.push({ op: 'update', uuid: blocker.document.uuid, data: { x: blocker.document.x, y: blocker.document.y, elevation: blocker.document.elevation ?? 0 }, options: { animate: false, teleport: true } });
           if (!noCollisionDamage) await applyDamage(targetToken.actor, remaining + bonusCreatureDmg);
           if (!noCollisionDamage) await applyDamage(blocker.actor, remaining + bonusCreatureDmg);
           collisionMsgs.push(`<strong>Collision!</strong> ${targetToken.name} hits ${blocker.name}. Both take <strong>${remaining + bonusCreatureDmg} damage</strong>.`);
@@ -536,25 +600,58 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
         await applyFallDamage(targetToken, finalElev, startGrid, agility, canFly, undoOps, collisionMsgs, fallReduction, noFallDamage);
       }
 
-      await commitUndo(buildUndoLog(targetToken, startPos, startElev, movedSnap, undoOps));
+      // --- NEW PERSISTENT UNDO LOGIC ---
+      // Use startPos for x/y (vertical path never moves the token horizontally) and the
+      // computed finalElev rather than reading from the document mid-animation.
+      const oldMoveId = targetToken.document.getFlag('draw-steel-combat-tools', 'lastFmMoveId');
+      if (oldMoveId) {
+        const oldMsg = game.messages.contents.find(m => m.getFlag('draw-steel-combat-tools', 'moveId') === oldMoveId);
+        if (oldMsg) await safeUpdate(oldMsg, { 'flags.draw-steel-combat-tools.isExpired': true });
+      }
+
+      const moveId = foundry.utils.randomID();
+      const fullUndoLog = buildUndoLog(targetToken, startPos, startElev, movedSnap, undoOps);
+
+      await safeUpdate(targetToken.document, { 'flags.draw-steel-combat-tools.lastFmMoveId': moveId });
+
+      const vertResultData = {
+        content:       buildSummary() + (collisionMsgs.length ? '<br>' + collisionMsgs.join('<br>') : ''),
+        undoLog:       fullUndoLog,
+        moveId,
+        targetTokenId: targetToken.id,
+        targetSceneId: canvas.scene.id,
+        finalPos:      { x: startPos.x, y: startPos.y, elevation: finalElev },
+        hadDamage:     collisionMsgs.length > 0,
+      };
+      if (suppressMessage) return vertResultData;
       await ChatMessage.create({
-        content: buildSummary() + '<br>' + (collisionMsgs.length ? collisionMsgs.join('<br>') + '<br>' : '') + '@Macro[Forced Movement Undo]{Undo}',
+        content: vertResultData.content,
+        flags: { 'draw-steel-combat-tools': { isFmUndo: true, isUndone: false, ...vertResultData } }
       });
       return;
     }
 
-    const GRID          = getGRID();
     const startPos      = { x: targetToken.document.x, y: targetToken.document.y };
     const startElevSnap = startElev;
     const undoOps       = [];
     const collisionMsgs = [];
     let landingIndex    = path.length - 1;
+    let costConsumed    = 0; // extra movement spent breaking through obstacles (beyond the 1 square of movement per step)
     const movedSnap     = snapStamina(targetToken.actor);
 
     for (let i = 0; i < path.length; i++) {
       const step      = path[i];
       const prev      = i > 0 ? path[i - 1] : startGrid;
-      const remaining = reduced - i;
+      const remaining = reduced - i - costConsumed;
+
+      // Stop if all movement is consumed (e.g. after paying wall-break costs)
+      if (remaining <= 0) {
+        console.log(`DSCT | FM | Step ${i}: movement exhausted (reduced=${reduced}, i=${i}, costConsumed=${costConsumed}). Stopping at step ${i - 1}.`);
+        landingIndex = i - 1;
+        break;
+      }
+      console.log(`DSCT | FM | Step ${i}: remaining=${remaining}, costConsumed=${costConsumed}, pos=(${step.x},${step.y})`);
+
       const stepElev  = isVertical && reduced > 0
         ? startElev + Math.round(reducedVert * (i + 1) / reduced)
         : startElev;
@@ -577,87 +674,105 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
       }
 
       const wall = wallBetween(prev, step);
-      if (wall && hasTags(wall, 'obstacle')) {
+      if (wall && !hasTags(wall, 'broken')) {
         const wallBottom = wall.flags?.['wall-height']?.bottom ?? 0;
         const wallTop    = wall.flags?.['wall-height']?.top    ?? Infinity;
         if (!(stepElev >= wallTop || stepElev < wallBottom)) {
-          const isBreakable = hasTags(wall, 'breakable');
-          const blockTag    = getTags(wall).find(t => t.startsWith('wall-block-'));
-
-          if (!isBreakable) {
+          // Bug 3: any wall without the 'obstacle' tag is an indestructible hard stop.
+          // Only walls tagged 'obstacle' (with a material tag) are breakable wall-blocks.
+          if (!hasTags(wall, 'obstacle')) {
             landingIndex = i - 1;
             const dmg = 2 + remaining + bonusObjectDmg;
             if (!noCollisionDamage) await applyDamage(targetToken.actor, dmg);
+            console.log(`DSCT | FM | Hit indestructible wall (no 'obstacle' tag) at step ${i}. dmg=${dmg}`);
             collisionMsgs.push(`${targetToken.name} hits a wall and takes <strong>${dmg} damage</strong>.`);
             break;
           }
 
-          const mat  = getMaterial(wall);
-          const rule = MATERIAL_RULES()[mat];
-          const dmg  = remaining < rule.cost ? 2 + remaining + bonusObjectDmg : rule.damage + bonusObjectDmg;
-          if (!noCollisionDamage) await applyDamage(targetToken.actor, dmg);
+          if (hasTags(wall, 'obstacle')) {
+            const blockTag = getTags(wall).find(t => t.startsWith('wall-block-'));
+            const isBreakable = hasTags(wall, 'breakable');
 
-          if (remaining >= rule.cost) {
-            if (blockTag) {
-              const allWalls    = getByTag(blockTag).filter(o => Array.isArray(o.c));
-              const tile        = canvas.tiles.placeables.find(t => hasTags(t, blockTag));
-              const isMidHeight = stepElev > wallBottom;
-              const isStable    = tile && hasTags(tile, 'stable');
-
-              if (isMidHeight && isStable) {
-                await splitTileAtElevation(tile, stepElev, undoOps, collisionMsgs);
-              } else if (isMidHeight && !isStable) {
-                const prevTop    = wallTop;
-                for (const w of allWalls) await safeUpdate(w, { 'flags.wall-height.top': wallTop - 1 });
-                const prevDmgTag = tile ? getTags(tile).find(t => t.startsWith('damaged:')) : null;
-                const prevDmgN   = prevDmgTag ? parseInt(prevDmgTag.split(':')[1]) : 0;
-                if (tile && game.user.isGM) {
-                  if (prevDmgTag) await removeTags(tile, [prevDmgTag]);
-                  await addTags(tile, [`damaged:${prevDmgN + 1}`]);
-                }
-                for (const w of allWalls) {
-                  undoOps.push({ op: 'update', uuid: w.uuid, data: { 'flags.wall-height.top': prevTop } });
-                }
-                if (tile) {
-                  undoOps.push({ op: 'removeTags', uuid: tile.document.uuid, tags: [`damaged:${prevDmgN + 1}`] });
-                  if (prevDmgTag) undoOps.push({ op: 'addTags', uuid: tile.document.uuid, tags: [prevDmgTag] });
-                }
-                collisionMsgs.push(`The top of the ${mat} object collapses into the gap (now ${wallTop - 1 - wallBottom} square${wallTop - 1 - wallBottom !== 1 ? 's' : ''} tall).`);
-              } else {
-                const origMat      = tile ? (getTags(tile).find(t => Object.keys(MATERIAL_ICONS).includes(t)) ?? 'stone') : 'stone';
-                const prevWallData = allWalls.map(w => ({ wall: w, restrict: { move: w.move, sight: w.sight, light: w.light, sound: w.sound } }));
-                for (const w of allWalls) {
-                  await safeUpdate(w, { move: 0, sight: 0, light: 0, sound: 0 });
-                  if (game.user.isGM) await addTags(w, ['broken']);
-                }
-                if (tile) {
-                  await safeUpdate(tile.document, { 'texture.src': MATERIAL_ICONS.broken, alpha: 0.8 });
-                  if (game.user.isGM) await addTags(tile, ['broken']);
-                  undoOps.push({ op: 'update',     uuid: tile.document.uuid, data: { 'texture.src': MATERIAL_ICONS[origMat], alpha: MATERIAL_ALPHA[origMat] } });
-                  undoOps.push({ op: 'removeTags', uuid: tile.document.uuid, tags: ['broken'] });
-                }
-                for (const { wall: w, restrict } of prevWallData) {
-                  undoOps.push({ op: 'update',     uuid: w.uuid, data: restrict });
-                  undoOps.push({ op: 'removeTags', uuid: w.uuid, tags: ['broken'] });
-                }
-              }
-            } else {
-              await safeDelete(wall);
+            if (!isBreakable) {
+              landingIndex = i - 1;
+              const dmg = 2 + remaining + bonusObjectDmg;
+              if (!noCollisionDamage) await applyDamage(targetToken.actor, dmg);
+              console.log(`DSCT | FM | Stopped by non-breakable obstacle wall at step ${i}. dmg=${dmg}`);
+              collisionMsgs.push(`${targetToken.name} hits a wall and takes <strong>${dmg} damage</strong>.`);
+              break;
             }
-            collisionMsgs.push(`${targetToken.name} smashes through ${mat} (costs ${rule.cost}, deals ${rule.damage} damage).`);
-            i += rule.cost - 1;
-            continue;
-          }
 
-          landingIndex = i - 1;
-          collisionMsgs.push(`${targetToken.name} hits ${mat} but lacks the momentum to break through (needs ${rule.cost}, has ${remaining}). Takes <strong>${dmg} damage</strong>.`);
-          break;
+            const mat  = getMaterial(wall);
+            const rule = MATERIAL_RULES()[mat];
+            const dmg  = remaining < rule.cost ? 2 + remaining + bonusObjectDmg : rule.damage + bonusObjectDmg;
+            if (!noCollisionDamage) await applyDamage(targetToken.actor, dmg);
+
+            if (remaining >= rule.cost) {
+              if (blockTag) {
+                const allWalls    = getByTag(blockTag).filter(o => Array.isArray(o.c));
+                const tile        = canvas.tiles.placeables.find(t => hasTags(t, blockTag));
+                const isMidHeight = stepElev > wallBottom;
+                const isStable    = tile && hasTags(tile, 'stable');
+
+                if (isMidHeight && isStable) {
+                  await splitTileAtElevation(tile, stepElev, undoOps, collisionMsgs);
+                } else if (isMidHeight && !isStable) {
+                  const prevTop    = wallTop;
+                  for (const w of allWalls) await safeUpdate(w, { 'flags.wall-height.top': wallTop - 1 });
+                  const prevDmgTag = tile ? getTags(tile).find(t => t.startsWith('damaged:')) : null;
+                  const prevDmgN   = prevDmgTag ? parseInt(prevDmgTag.split(':')[1]) : 0;
+                  if (tile && game.user.isGM) {
+                    if (prevDmgTag) await removeTags(tile, [prevDmgTag]);
+                    await addTags(tile, [`damaged:${prevDmgN + 1}`]);
+                  }
+                  for (const w of allWalls) {
+                    undoOps.push({ op: 'update', uuid: w.uuid, data: { 'flags.wall-height.top': prevTop } });
+                  }
+                  if (tile) {
+                    undoOps.push({ op: 'removeTags', uuid: tile.document.uuid, tags: [`damaged:${prevDmgN + 1}`] });
+                    if (prevDmgTag) undoOps.push({ op: 'addTags', uuid: tile.document.uuid, tags: [prevDmgTag] });
+                  }
+                  collisionMsgs.push(`The top of the ${mat} object collapses into the gap (now ${wallTop - 1 - wallBottom} square${wallTop - 1 - wallBottom !== 1 ? 's' : ''} tall).`);
+                } else {
+                  const origMat      = tile ? (getTags(tile).find(t => Object.keys(MATERIAL_ICONS).includes(t)) ?? 'stone') : 'stone';
+                  const prevWallData = allWalls.map(w => ({ wall: w, restrict: { move: w.move, sight: w.sight, light: w.light, sound: w.sound } }));
+                  for (const w of allWalls) {
+                    await safeUpdate(w, { move: 0, sight: 0, light: 0, sound: 0 });
+                    if (game.user.isGM) await addTags(w, ['broken']);
+                  }
+                  if (tile) {
+                    await safeUpdate(tile.document, { 'texture.src': MATERIAL_ICONS.broken, alpha: 0.8 });
+                    if (game.user.isGM) await addTags(tile, ['broken']);
+                    undoOps.push({ op: 'update',     uuid: tile.document.uuid, data: { 'texture.src': MATERIAL_ICONS[origMat], alpha: MATERIAL_ALPHA[origMat] } });
+                    undoOps.push({ op: 'removeTags', uuid: tile.document.uuid, tags: ['broken'] });
+                  }
+                  for (const { wall: w, restrict } of prevWallData) {
+                    undoOps.push({ op: 'update',     uuid: w.uuid, data: restrict });
+                    undoOps.push({ op: 'removeTags', uuid: w.uuid, tags: ['broken'] });
+                  }
+                }
+              } else {
+                await safeDelete(wall);
+              }
+              collisionMsgs.push(`${targetToken.name} smashes through ${mat} (costs ${rule.cost}, deals ${rule.damage} damage).`);
+              costConsumed += rule.cost - 1;
+              console.log(`DSCT | FM | Broke wall (${mat}) at step ${i}. cost=${rule.cost}, costConsumed now=${costConsumed}, remaining after break=${remaining - rule.cost}`);
+              continue;
+            }
+
+            landingIndex = i - 1;
+            console.log(`DSCT | FM | Blocked by ${mat} wall at step ${i} (needs ${rule.cost}, has ${remaining}). Landing at step ${i - 1}.`);
+            collisionMsgs.push(`${targetToken.name} hits ${mat} but lacks the momentum to break through (needs ${rule.cost}, has ${remaining}). Takes <strong>${dmg} damage</strong>.`);
+            break;
+          }
         }
       }
 
       const blocker = tokenAt(step.x, step.y, targetToken.id);
       if (blocker) {
         landingIndex = i - 1;
+        // --- NEW: Save position ---
+        undoOps.push({ op: 'update', uuid: blocker.document.uuid, data: { x: blocker.document.x, y: blocker.document.y, elevation: blocker.document.elevation ?? 0 }, options: { animate: false, teleport: true } });
         const movedSquadGroup   = getSquadGroup(targetToken.actor);
         const blockerSquadGroup = getSquadGroup(blocker.actor);
         const sharedGroup       = movedSquadGroup && blockerSquadGroup &&
@@ -726,16 +841,19 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
               await safeDelete(tile.document);
             }
             collisionMsgs.push(`${targetToken.name} smashes through ${mat} (costs ${rule.cost}, deals ${rule.damage} damage).`);
-            i += rule.cost - 1;
+            costConsumed += rule.cost - 1;
+            console.log(`DSCT | FM | Broke tile (${mat}) at step ${i}. cost=${rule.cost}, costConsumed now=${costConsumed}, remaining after break=${remaining - rule.cost}`);
             continue;
           }
 
           landingIndex = i - 1;
+          console.log(`DSCT | FM | Blocked by ${mat} tile at step ${i} (needs ${rule.cost}, has ${remaining}). Landing at step ${i - 1}.`);
           collisionMsgs.push(`${targetToken.name} hits ${mat} but lacks the momentum to break through (needs ${rule.cost}, has ${remaining}). Takes <strong>${dmg} damage</strong>.`);
           break;
         }
       }
     }
+    console.log(`DSCT | FM | Path loop done. landingIndex=${landingIndex}, path.length=${path.length}, costConsumed=${costConsumed}`);
 
     const landingGrid      = landingIndex >= 0 ? path[landingIndex] : startGrid;
     const landingStepIndex = landingIndex >= 0 ? landingIndex : -1;
@@ -754,11 +872,50 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
       : startElev;
     await applyFallDamage(targetToken, finalElev, landingGrid, agility, canFly, undoOps, collisionMsgs, fallReduction, noFallDamage);
 
-    await commitUndo(buildUndoLog(targetToken, startPos, startElevSnap, movedSnap, undoOps));
+    // --- NEW PERSISTENT UNDO LOGIC ---
+    // Use the computed landing world coordinates for finalPos rather than reading from the document.
+    const landingWorld = stepsToAnimate.length > 0 ? toWorld(landingGrid) : startPos;
+
+    // Poll until the token reaches its destination before creating the undo message.
+    // Foundry v13 drives TokenDocument.x/y through intermediate animation frames, so
+    // renderChatMessageHTML would see a mid-animation position and falsely expire the undo button.
+    // CanvasAnimation.getAnimation is unreliable here, so we poll the live position directly.
+    if (stepsToAnimate.length > 0) {
+      const destX = landingWorld.x;
+      const destY = landingWorld.y;
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const live = canvas.scene.tokens.get(targetToken.id);
+        if (!live || (Math.abs(live.x - destX) < 1 && Math.abs(live.y - destY) < 1)) break;
+        await new Promise(r => setTimeout(r, 50));
+      }
+    }
+
+    const oldMoveId = targetToken.document.getFlag('draw-steel-combat-tools', 'lastFmMoveId');
+    if (oldMoveId) {
+      const oldMsg = game.messages.contents.find(m => m.getFlag('draw-steel-combat-tools', 'moveId') === oldMoveId);
+      if (oldMsg) await safeUpdate(oldMsg, { 'flags.draw-steel-combat-tools.isExpired': true });
+    }
+
+    const moveId = foundry.utils.randomID();
+    const fullUndoLog = buildUndoLog(targetToken, startPos, startElevSnap, movedSnap, undoOps);
+
+    await safeUpdate(targetToken.document, { 'flags.draw-steel-combat-tools.lastFmMoveId': moveId });
+
+    const mainResultData = {
+      content:       buildSummary() + (collisionMsgs.length ? '<br>' + collisionMsgs.join('<br>') : ''),
+      undoLog:       fullUndoLog,
+      moveId,
+      targetTokenId: targetToken.id,
+      targetSceneId: canvas.scene.id,
+      finalPos:      { x: landingWorld.x, y: landingWorld.y, elevation: finalElev },
+      hadDamage:     collisionMsgs.length > 0,
+    };
+    if (suppressMessage) return mainResultData;
     await ChatMessage.create({
-      content: buildSummary() + '<br>' + (collisionMsgs.length ? collisionMsgs.join('<br>') + '<br>' : '') + '@Macro[Forced Movement Undo]{Undo}',
+      content: mainResultData.content,
+      flags: { 'draw-steel-combat-tools': { isFmUndo: true, isUndone: false, ...mainResultData } }
     });
-  });
 };
 
 const getTargetAndSource = () => {
@@ -831,6 +988,7 @@ export const pickTarget = (remaining) => new Promise((resolve) => {
 });
 
 export async function runForcedMovement(macroArgs = []) {
+
   if (Array.isArray(macroArgs) && macroArgs.length >= 2) {
     const type              = parseType(macroArgs[0]);
     const distance          = parseInt(macroArgs[1]);
@@ -843,6 +1001,7 @@ export async function runForcedMovement(macroArgs = []) {
     const noCollisionDamage = macroArgs[8] === 'true' || macroArgs[8] === true;
     const keywords          = macroArgs[9] ? String(macroArgs[9]).split(',').map(k => k.trim().toLowerCase()).filter(Boolean) : [];
     const range             = parseInt(macroArgs[10]) || 0;
+    const fastMove          = macroArgs[11] === 'true' || macroArgs[11] === true;
 
     let verticalHeight = 0;
     if (verticalRaw !== undefined && verticalRaw !== '') {
@@ -868,14 +1027,14 @@ export async function runForcedMovement(macroArgs = []) {
       }
     }
 
-    await _runForcedMovement(type, distance, target, source, bonusCreatureDmg, bonusObjectDmg, verticalHeight, fallReduction, noFallDamage, ignoreStability, noCollisionDamage, keywords);
+    await _runForcedMovement(type, distance, target, source, bonusCreatureDmg, bonusObjectDmg, verticalHeight, fallReduction, noFallDamage, ignoreStability, noCollisionDamage, keywords, fastMove);
   } 
   else if (typeof macroArgs === 'object' && !Array.isArray(macroArgs) && Object.keys(macroArgs).length > 0) {
-    const { type, distance, sourceId, targetId, verticalHeight, fallReduction, noFallDamage, noCollisionDamage, ignoreStability } = macroArgs;
+    const { type, distance, sourceId, targetId, verticalHeight, fallReduction, noFallDamage, noCollisionDamage, ignoreStability, fastMove, suppressMessage } = macroArgs;
     const target = canvas.tokens.get(targetId);
     const source = sourceId ? canvas.tokens.get(sourceId) : null;
     if (!target) { ui.notifications.warn('DSCT | Target token not found on canvas.'); return; }
-    await _runForcedMovement(type, distance, target, source, 0, 0, verticalHeight, fallReduction, noFallDamage, ignoreStability, noCollisionDamage, []);
+    return await _runForcedMovement(type, distance, target, source, 0, 0, verticalHeight, fallReduction, noFallDamage, ignoreStability, noCollisionDamage, [], fastMove, suppressMessage);
   } 
   else {
     toggleForcedMovementPanel();
@@ -904,13 +1063,15 @@ export class ForcedMovementPanel extends Application {
     this._html = null;
     this._sourceToken = null;
     this._targetToken = null;
+    this._targetTokens = [];
+    this._multiMode = false; // Tracks if we are in Multi-Target mode
     this._updatePreview();
   }
 
   static get defaultOptions() {
     return foundry.utils.mergeObject(super.defaultOptions, {
       id: 'dsct-fm-panel', title: 'Forced Movement', template: null,
-      width: s(290), height: 'auto', resizable: false, minimizable: false,
+      width: s(220), height: 'auto', resizable: false, minimizable: false,
     });
   }
 
@@ -918,7 +1079,8 @@ export class ForcedMovementPanel extends Application {
     const controlled  = canvas.tokens.controlled;
     const targets     = [...game.user.targets];
     this._sourceToken = controlled.length === 1 ? controlled[0] : null;
-    this._targetToken = targets.length === 1 ? targets[0] : null;
+    this._targetTokens = targets;
+    this._targetToken = targets.length > 0 ? targets[0] : null;
   }
 
   _refreshPanel() {
@@ -926,15 +1088,46 @@ export class ForcedMovementPanel extends Application {
     this._updatePreview();
     const p = palette();
 
+    // 1. Update Source Token
     const sourceImg  = this._html.find('#fm-source-img')[0];
     const sourceName = this._html.find('#fm-source-name')[0];
     if (sourceImg)  sourceImg.src = this._sourceToken?.document.texture.src ?? 'icons/svg/mystery-man.svg';
     if (sourceName) { sourceName.textContent = this._sourceToken?.name ?? 'No Source'; sourceName.style.color = this._sourceToken ? p.text : p.textDim; }
 
-    const targetImg  = this._html.find('#fm-target-img')[0];
-    const targetName = this._html.find('#fm-target-name')[0];
-    if (targetImg)  targetImg.src = this._targetToken?.document.texture.src ?? 'icons/svg/mystery-man.svg';
-    if (targetName) { targetName.textContent = this._targetToken?.name ?? 'No Target'; targetName.style.color = this._targetToken ? p.text : p.textDim; }
+    // 2. Update Target Container (Dynamically builds Grid or Single Image)
+    const targetContainer = this._html.find('#fm-target-container')[0];
+    if (targetContainer) {
+      if (this._multiMode) {
+        // Multi-Mode: 3x3 Grid
+        const displayTargets = this._targetTokens.slice(0, 9);
+        const gridItems = displayTargets.map(t => `<img src="${t.document.texture.src}" style="width:${s(13)}px;height:${s(13)}px;border-radius:2px;object-fit:cover;border:1px solid ${p.border};background:${p.bg};" title="${t.name}">`).join('');
+        
+        // Fill empty slots so the grid always maintains its shape
+        const emptySlots = Math.max(0, 9 - displayTargets.length);
+        const emptyItems = Array(emptySlots).fill(`<div style="width:${s(13)}px;height:${s(13)}px;border-radius:2px;border:1px dashed ${p.borderOuter};"></div>`).join('');
+        
+        targetContainer.innerHTML = `
+          <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:${s(2)}px;width:${s(44)}px;height:${s(44)}px;align-items:center;justify-items:center;">
+            ${gridItems}${emptyItems}
+          </div>
+          <div style="font-size:${s(8)}px;color:${displayTargets.length ? p.text : p.textDim};text-align:center;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:${s(2)}px;">${displayTargets.length} Target${displayTargets.length !== 1 ? 's' : ''}</div>
+        `;
+      } else {
+        // Single-Mode: Large Icon
+        const targetSrc   = this._targetToken?.document.texture.src ?? 'icons/svg/mystery-man.svg';
+        const targetLabel = this._targetToken?.name ?? 'No Target';
+        targetContainer.innerHTML = `
+          <img src="${targetSrc}" style="width:${s(44)}px;height:${s(44)}px;border-radius:${s(3)}px;object-fit:contain;border:1px solid ${p.border};background:${p.bg};">
+          <div style="font-size:${s(8)}px;color:${this._targetToken ? p.text : p.textDim};text-align:center;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:${s(2)}px;">${targetLabel}</div>
+        `;
+      }
+    }
+
+    // 3. Update Toggle Button Color
+    const toggleBtn = this._html.find('[data-action="toggle-multi"]')[0];
+    if (toggleBtn) {
+      toggleBtn.style.color = this._multiMode ? p.accent : p.textDim;
+    }
   }
 
   async _renderInner(data) {
@@ -954,6 +1147,8 @@ export class ForcedMovementPanel extends Application {
 
     const sourceSrc   = this._sourceToken?.document.texture.src ?? 'icons/svg/mystery-man.svg';
     const sourceLabel = this._sourceToken?.name ?? 'No Source';
+    
+    // Initial render state for target container
     const targetSrc   = this._targetToken?.document.texture.src ?? 'icons/svg/mystery-man.svg';
     const targetLabel = this._targetToken?.name ?? 'No Target';
 
@@ -971,14 +1166,19 @@ export class ForcedMovementPanel extends Application {
 
         <div style="padding:${s(6)}px;border:1px solid ${p.border};border-radius:${s(3)}px;background:${p.bgInner};margin-bottom:${s(6)}px;">
           <div style="display:flex;align-items:center;gap:${s(6)}px;">
-            <div style="display:flex;flex-direction:column;align-items:center;gap:${s(3)}px;flex:1;min-width:0;">
+            <div style="display:flex;flex-direction:column;align-items:center;flex:1;min-width:0;">
               <img id="fm-source-img" src="${sourceSrc}" style="width:${s(44)}px;height:${s(44)}px;border-radius:${s(3)}px;object-fit:contain;border:1px solid ${p.border};background:${p.bg};">
-              <div id="fm-source-name" style="font-size:${s(8)}px;color:${this._sourceToken ? p.text : p.textDim};text-align:center;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${sourceLabel}</div>
+              <div id="fm-source-name" style="font-size:${s(8)}px;color:${this._sourceToken ? p.text : p.textDim};text-align:center;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:${s(2)}px;">${sourceLabel}</div>
             </div>
-            <div style="font-size:${s(12)}px;color:${p.textDim};flex-shrink:0;padding-bottom:${s(10)}px;">moves</div>
-            <div style="display:flex;flex-direction:column;align-items:center;gap:${s(3)}px;flex:1;min-width:0;">
-              <img id="fm-target-img" src="${targetSrc}" style="width:${s(44)}px;height:${s(44)}px;border-radius:${s(3)}px;object-fit:contain;border:1px solid ${p.border};background:${p.bg};">
-              <div id="fm-target-name" style="font-size:${s(8)}px;color:${this._targetToken ? p.text : p.textDim};text-align:center;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${targetLabel}</div>
+            
+            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:${s(4)}px;flex-shrink:0;">
+              <div style="font-size:${s(12)}px;color:${p.textDim};">moves</div>
+              <button data-action="toggle-multi" title="Toggle Multi-Target Mode" style="background:transparent;border:none;color:${this._multiMode ? p.accent : p.textDim};cursor:pointer;font-size:${s(12)}px;padding:0;display:flex;align-items:center;justify-content:center;"><i class="fas fa-users"></i></button>
+            </div>
+
+            <div id="fm-target-container" style="display:flex;flex-direction:column;align-items:center;flex:1;min-width:0;height:${s(58)}px;">
+              <img src="${targetSrc}" style="width:${s(44)}px;height:${s(44)}px;border-radius:${s(3)}px;object-fit:contain;border:1px solid ${p.border};background:${p.bg};">
+              <div style="font-size:${s(8)}px;color:${this._targetToken ? p.text : p.textDim};text-align:center;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:${s(2)}px;">${targetLabel}</div>
             </div>
           </div>
         </div>
@@ -1014,11 +1214,12 @@ export class ForcedMovementPanel extends Application {
             <label style="color:${p.textDim};font-size:${s(8)}px;display:flex;align-items:center;gap:${s(3)}px;cursor:pointer;"><input type="checkbox" id="fm-no-fall"> No Fall Dmg</label>
             <label style="color:${p.textDim};font-size:${s(8)}px;display:flex;align-items:center;gap:${s(3)}px;cursor:pointer;"><input type="checkbox" id="fm-no-col"> No Col. Dmg</label>
             <label style="color:${p.textDim};font-size:${s(8)}px;display:flex;align-items:center;gap:${s(3)}px;cursor:pointer;"><input type="checkbox" id="fm-ign-stab"> Ignore Stabil.</label>
+            <label style="color:${p.accent};font-size:${s(8)}px;font-weight:bold;display:flex;align-items:center;gap:${s(3)}px;cursor:pointer;"><input type="checkbox" id="fm-fast-move"> Fast Auto-Path</label>
           </div>
         </div>
 
         <button data-action="execute-fm" style="width:100%;padding:${s(6)}px;border-radius:${s(3)}px;cursor:pointer;font-size:${s(10)}px;font-weight:bold;background:${p.bgBtn};border:1px solid ${p.accent};color:${p.accent};">
-          <i class="fas fa-arrows-alt" style="margin-right:${s(4)}px;"></i> Execute Move
+          <i class="fas fa-arrows-alt" style="margin-right:${s(4)}px;"></i> <span id="fm-exec-text">Execute Move</span>
         </button>
 
       </div>`);
@@ -1055,17 +1256,39 @@ export class ForcedMovementPanel extends Application {
     this._themeObserver = new MutationObserver(() => this._refreshPanel());
     this._themeObserver.observe(document.body, { attributeFilter: ['class'] });
 
+    // --- NEW: DYNAMIC BUTTON TEXT ---
+    const updateExecButton = () => {
+      const type = html.find('#fm-type').val() || 'Move';
+      const dist = html.find('#fm-dist').val() || '1';
+      const isVert = html.find('#fm-vert-check').is(':checked');
+      html.find('#fm-exec-text').text(`Execute ${isVert ? 'Vertical ' : ''}${type} ${dist}`);
+    };
+    html.find('input, select').on('change input', updateExecButton);
+    updateExecButton(); // Run once on load to set initial state
+
     html.on('click', '[data-action]', async e => {
       const action = e.currentTarget.dataset.action;
-      if (action === 'close-window') { this.close(); return; }
+      
+      if (action === 'close-window') { 
+        this.close(); 
+        return; 
+      }
+      
+      if (action === 'toggle-multi') {
+        this._multiMode = !this._multiMode;
+        this._refreshPanel();
+        return;
+      }
+      
       if (action === 'execute-fm') {
-        if (!this._targetToken) { ui.notifications.warn("DSCT | You must target a token."); return; }
+        if (!this._multiMode && !this._targetToken) { ui.notifications.warn("DSCT | You must target a token."); return; }
+        if (this._multiMode && this._targetTokens.length === 0) { ui.notifications.warn("DSCT | You must target at least one token."); return; }
 
         const type = html.find('#fm-type').val();
         const distance = parseInt(html.find('#fm-dist').val()) || 1;
         const isVertical = html.find('#fm-vert-check').is(':checked');
         const rawVert = html.find('#fm-vert-dist').val();
-        
+
         let verticalHeight = 0;
         if (isVertical) {
           const sign = type === 'Pull' ? -1 : 1;
@@ -1077,16 +1300,38 @@ export class ForcedMovementPanel extends Application {
         const noFallDamage = html.find('#fm-no-fall').is(':checked');
         const noCollisionDamage = html.find('#fm-no-col').is(':checked');
         const ignoreStability = html.find('#fm-ign-stab').is(':checked');
+        const fastMove = html.find('#fm-fast-move').is(':checked');
 
         const api = game.modules.get('draw-steel-combat-tools')?.api;
         if (api && api.forcedMovement) {
-          await api.forcedMovement({
-            type, distance, 
-            sourceId: this._sourceToken?.id, 
-            targetId: this._targetToken.id,
-            verticalHeight, fallReduction, 
-            noFallDamage, noCollisionDamage, ignoreStability
-          });
+          const targetsToProcess = this._multiMode ? this._targetTokens.slice(0, 9) : [this._targetToken];
+          const payload = { type, distance, sourceId: this._sourceToken?.id, verticalHeight, fallReduction, noFallDamage, noCollisionDamage, ignoreStability, fastMove };
+
+          if (targetsToProcess.length === 1) {
+            // Single target: message posted inside the engine as normal
+            await api.forcedMovement({ ...payload, targetId: targetsToProcess[0].id });
+          } else {
+            // Multiple targets: collect results and post one combined message
+            const results = [];
+            for (const t of targetsToProcess) {
+              const result = await api.forcedMovement({ ...payload, targetId: t.id, suppressMessage: true });
+              if (result) results.push(result); // undefined = stability fully blocked or path cancelled
+            }
+            if (results.length === 0) return;
+            await ChatMessage.create({
+              content: results.map(r => r.content).join('<hr style="margin: 4px 0;">'),
+              flags: {
+                'draw-steel-combat-tools': {
+                  isFmUndo:   true,
+                  isCombined: true,
+                  entries:    results.map(({ content, undoLog, moveId, targetTokenId, targetSceneId, finalPos, hadDamage }) =>
+                                ({ content, undoLog, moveId, targetTokenId, targetSceneId, finalPos, hadDamage })),
+                  isUndone:   false,
+                  hadDamage:  results.some(r => r.hadDamage),
+                }
+              }
+            });
+          }
         }
       }
     });
@@ -1107,4 +1352,142 @@ export const toggleForcedMovementPanel = () => {
   } else {
     new ForcedMovementPanel().render(true);
   }
+};
+// Shared helper: handle death/revival side-effects for a single undoLog's stamina ops.
+// Returns an array of token names that were revived from death.
+const handleStaminaRevival = async (undoLog) => {
+  const staminaOps   = undoLog.filter(op => op.op === 'stamina');
+  const revivedNames = [];
+  for (const op of staminaOps) {
+    const actor = await fromUuid(op.uuid);
+    if (!actor) continue;
+    const tokens = canvas.scene.tokens.filter(t => t.actor?.id === actor.id);
+    for (const token of tokens) {
+      const skulls = canvas.scene.tiles.filter(t => t.flags?.['draw-steel-combat-tools']?.deadTokenId === token.id);
+      let revivedFromDeath = false;
+      // FALLBACK CHECK: Even if the 'dead' status vanished, if they have a skull, they died!
+      if (token.actor.statuses?.has('dead') || skulls.length > 0) {
+        if (token.actor.statuses?.has('dead')) await safeToggleStatusEffect(token.actor, 'dead', { active: false });
+        revivedFromDeath = true;
+      }
+      if (token.hidden) await safeUpdate(token, { hidden: false });
+      for (const skull of skulls) await safeDelete(skull);
+      const combatant = game.combat?.combatants.find(c => c.tokenId === token.id);
+      if (combatant && combatant.hidden) await safeUpdate(combatant, { hidden: false });
+      if (revivedFromDeath) {
+        const deathMsgs = game.messages.filter(m =>
+          m.getFlag('draw-steel-combat-tools', 'isDeathMessage') &&
+          m.getFlag('draw-steel-combat-tools', 'deadTokenId') === token.id
+        );
+        for (const dm of deathMsgs) await safeDelete(dm);
+        revivedNames.push(token.name);
+      }
+    }
+  }
+  return revivedNames;
+};
+
+// Shared helper: check whether a single message entry is expired.
+const isEntryExpired = (entry) => {
+  if (canvas.scene?.id !== entry.targetSceneId) return true;
+  const token = canvas.scene.tokens.get(entry.targetTokenId);
+  if (!token) return true;
+  const lastMoveId = token.getFlag('draw-steel-combat-tools', 'lastFmMoveId');
+  if (lastMoveId && lastMoveId !== entry.moveId) return true;
+  if (entry.finalPos) {
+    const isDead = token.actor?.statuses?.has('dead') || token.hidden;
+    if (!isDead) {
+      if (token.x !== entry.finalPos.x || token.y !== entry.finalPos.y || (token.elevation ?? 0) !== entry.finalPos.elevation) return true;
+    }
+  }
+  return false;
+};
+
+// --- FORCED MOVEMENT CHAT UI HOOK (With Death-Tracker Cross-Integration) ---
+export const registerForcedMovementHooks = () => {
+  const STATUS_STYLE = 'text-align: center; color: var(--color-text-dark-secondary); font-style: italic; font-size: 11px; padding: 4px; border: 1px dashed var(--color-border-dark-4); border-radius: 3px;';
+
+  Hooks.on('renderChatMessageHTML', (msg, htmlElement) => {
+    const html = $(htmlElement);
+    if (!msg.getFlag('draw-steel-combat-tools', 'isFmUndo')) return;
+
+    const isUndone   = msg.getFlag('draw-steel-combat-tools', 'isUndone');
+    const isCombined = msg.getFlag('draw-steel-combat-tools', 'isCombined');
+    const hadDamage  = msg.getFlag('draw-steel-combat-tools', 'hadDamage');
+    const container  = $('<div class="dsct-fm-undo-container" style="margin-top: 4px;"></div>');
+
+    // ── COMBINED MULTI-TARGET MESSAGE ────────────────────────────────────────
+    if (isCombined) {
+      const entries   = msg.getFlag('draw-steel-combat-tools', 'entries') ?? [];
+      let isExpired   = msg.getFlag('draw-steel-combat-tools', 'isExpired') ?? false;
+      if (!isExpired) isExpired = entries.some(isEntryExpired);
+
+      const undoneText = hadDamage ? '(Movements and Damage Undone)' : '(Movements Undone)';
+
+      if (isUndone) {
+        container.append(`<div style="${STATUS_STYLE}">${undoneText}</div>`);
+      } else if (isExpired) {
+        container.append(`<div style="${STATUS_STYLE}">(Undo Expired)</div>`);
+      } else if (game.user.isGM || msg.isAuthor) {
+        const btn = $(`<button type="button" class="dsct-undo-fm" style="cursor:pointer; font-size: 12px; line-height: 14px; margin-top: 2px;"><i class="fa-solid fa-rotate-left"></i> Undo All Movements</button>`);
+        btn.on('click', async (e) => {
+          e.preventDefault();
+          await safeUpdate(msg, { 'flags.draw-steel-combat-tools.isUndone': true });
+          const allRevived = [];
+          for (const entry of [...entries].reverse()) {
+            if (entry.undoLog) {
+              await replayUndo(entry.undoLog);
+              allRevived.push(...await handleStaminaRevival(entry.undoLog));
+            }
+          }
+          const unique = [...new Set(allRevived)];
+          ui.notifications.info(unique.length > 0
+            ? `Forced movement reversed. Revived: ${unique.join(', ')}.`
+            : 'All forced movements undone.'
+          );
+        });
+        container.append(btn);
+      }
+
+      html.find('.message-content').append(container);
+      return;
+    }
+
+    // ── SINGLE-TARGET MESSAGE ────────────────────────────────────────────────
+    let isExpired = msg.getFlag('draw-steel-combat-tools', 'isExpired') ?? false;
+    if (!isExpired) {
+      isExpired = isEntryExpired({
+        moveId:        msg.getFlag('draw-steel-combat-tools', 'moveId'),
+        targetTokenId: msg.getFlag('draw-steel-combat-tools', 'targetTokenId'),
+        targetSceneId: msg.getFlag('draw-steel-combat-tools', 'targetSceneId'),
+        finalPos:      msg.getFlag('draw-steel-combat-tools', 'finalPos'),
+      });
+    }
+
+    const undoneText = hadDamage ? '(Movement and Damage Undone)' : '(Movement Undone)';
+
+    if (isUndone) {
+      container.append(`<div style="${STATUS_STYLE}">${undoneText}</div>`);
+    } else if (isExpired) {
+      container.append(`<div style="${STATUS_STYLE}">(Undo Expired)</div>`);
+    } else if (game.user.isGM || msg.isAuthor) {
+      const btn = $(`<button type="button" class="dsct-undo-fm" style="cursor:pointer; font-size: 12px; line-height: 14px; margin-top: 2px;"><i class="fa-solid fa-rotate-left"></i> Undo Movement</button>`);
+      btn.on('click', async (e) => {
+        e.preventDefault();
+        const undoLog = msg.getFlag('draw-steel-combat-tools', 'undoLog');
+        if (undoLog) {
+          await safeUpdate(msg, { 'flags.draw-steel-combat-tools.isUndone': true });
+          await replayUndo(undoLog);
+          const revivedNames = await handleStaminaRevival(undoLog);
+          ui.notifications.info(revivedNames.length > 0
+            ? `Forced movement reversed. Revived: ${[...new Set(revivedNames)].join(', ')}.`
+            : 'Forced movement undone.'
+          );
+        }
+      });
+      container.append(btn);
+    }
+
+    html.find('.message-content').append(container);
+  });
 };

@@ -81,7 +81,7 @@ export const replayUndo = async (ops) => {
       if (!doc) continue;
       const obj = doc.object ?? doc;
       switch (entry.op) {
-        case 'update':     await safeUpdate(doc, entry.data); break;
+        case 'update':     await safeUpdate(doc, entry.data, entry.options ?? {}); break;
         case 'delete':     await safeDelete(doc); break;
         case 'addTags':    await addTags(obj, entry.tags); break;
         case 'removeTags': await removeTags(obj, entry.tags); break;
@@ -205,6 +205,6 @@ export const getWallBlockTop = (tile) => {
 };
 
 export const safeTeleport = async (tokenDoc, targetX, targetY) => {
-  // Pass the native Foundry flags to instantly snap the token without pathfinding
+  canvas.tokens.releaseAll();
   await safeUpdate(tokenDoc, { x: targetX, y: targetY }, { animate: false, teleport: true });
 };
