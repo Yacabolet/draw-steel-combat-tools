@@ -8,7 +8,7 @@ import { registerDeathTrackerHooks, runReviveUI, runPowerWordKillUI } from './de
 import { applySquadLabels, autoRenameGroups, registerSquadLabelHooks } from './squad-labels.js';
 import { applyTriggeredActions, registerTriggeredActionHooks } from './triggered-actions.js';
 import { registerModuleButtons } from './module-buttons.js';
-import { installMacros, InstallMacrosMenu } from './setup-macros.js';
+import { installMacros, distributeAbilities, InstallMacrosMenu } from './setup-macros.js';
 import { toggleTeleportPanel, registerTeleportHooks, runTeleport } from './teleport.js';
 
 const api = {
@@ -32,7 +32,8 @@ const api = {
   triggeredActions: applyTriggeredActions,
   teleport:         runTeleport,
   teleportUI:       toggleTeleportPanel,
-  installMacros:    installMacros,
+  installMacros:        installMacros,
+  distributeAbilities:  distributeAbilities,
   socket:           null,
 };
 
