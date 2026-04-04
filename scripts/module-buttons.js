@@ -23,6 +23,14 @@ export const registerModuleButtons = () => {
         visible: true,
         onClick: () => getApi()?.forcedMovementUI()
       },
+      'dsct-teleport': {
+        name: 'dsct-teleport',
+        title: 'Teleport',
+        icon: 'fas fa-magic',
+        button: true,
+        visible: game.settings.get('draw-steel-combat-tools', 'teleportEnabled'),
+        onClick: () => getApi()?.teleportUI()
+      },
       'dsct-wall': {
         name: 'dsct-wall',
         title: 'Wall Builder',

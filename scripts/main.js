@@ -9,6 +9,7 @@ import { registerDeathTrackerHooks, runReviveUI, runPowerWordKillUI } from './de
 import { applySquadLabels, autoRenameGroups, registerSquadLabelHooks } from './squad-labels.js';
 import { applyTriggeredActions, registerTriggeredActionHooks } from './triggered-actions.js';
 import { registerModuleButtons } from './module-buttons.js';
+import { toggleTeleportPanel, registerTeleportHooks, runTeleport } from './teleport.js';
 
 const MAIN_VERSION = "v0.3.5 - Undo Expired Fix";
 console.log(`🔴 DSCT DEBUG | Loaded main.js - Version: ${MAIN_VERSION}`);
@@ -31,6 +32,8 @@ const api = {
   squadLabels: applySquadLabels,
   renameSquads: autoRenameGroups,
   triggeredActions: applyTriggeredActions,
+  teleport: runTeleport,
+  teleportUI: toggleTeleportPanel,
   socket: null,
 };
 
@@ -80,6 +83,11 @@ Hooks.once('init', () => {
   game.settings.register('draw-steel-combat-tools', 'aidEdgeUuid', {
     name: 'Aid Edge Effect UUID', hint: 'UUID of an Active Effect that grants an edge on a roll. Used by the Grab system.',
     scope: 'world', config: true, type: String, default: ''
+  });
+
+  game.settings.register('draw-steel-combat-tools', 'teleportEnabled', {
+    name: 'Enable Teleport Tool', hint: 'Adds a teleport button to the token controls for phasing tokens across the map.',
+    scope: 'world', config: true, type: Boolean, default: true
   });
 
   game.settings.register('draw-steel-combat-tools', 'deathTrackerEnabled', {
@@ -136,6 +144,7 @@ Hooks.once('init', () => {
   registerTriggeredActionHooks();
   registerModuleButtons();
   registerForcedMovementHooks();
+  registerTeleportHooks();
 
   game.keybindings.register('draw-steel-combat-tools', 'refreshChatInjections', {
     name: 'Refresh Chat Forced Movement Buttons', hint: 'Re-injects Execute buttons into any chat messages that have forced movement data.',
