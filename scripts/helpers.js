@@ -130,8 +130,9 @@ export const applyDamage = async (actor, amount, squadGroupOverride = undefined)
   const prevTemp    = actor.system.stamina.temporary;
   const squadGroup  = squadGroupOverride !== undefined ? squadGroupOverride : getSquadGroup(actor);
   const prevSquadHP = squadGroup?.system?.staminaValue ?? null;
+  const squadCombatantIds = squadGroup ? Array.from(squadGroup.members || []).filter(m => m).map(m => m.id) : [];
   await safeTakeDamage(actor, amount, { type: 'untyped', ignoredImmunities: [] });
-  return { prevTemp, prevValue, prevSquadHP, squadGroup };
+  return { prevTemp, prevValue, prevSquadHP, squadGroup, squadCombatantIds };
 };
 
 export const undoDamage = async (actor, { prevTemp, prevValue, prevSquadHP, squadGroup }) => {
@@ -141,12 +142,16 @@ export const undoDamage = async (actor, { prevTemp, prevValue, prevSquadHP, squa
   }
 };
 
-export const snapStamina = (actor) => ({
-  prevValue:   actor.system.stamina.value,
-  prevTemp:    actor.system.stamina.temporary,
-  squadGroup:  getSquadGroup(actor),
-  prevSquadHP: getSquadGroup(actor)?.system?.staminaValue ?? null,
-});
+export const snapStamina = (actor) => {
+  const sg = getSquadGroup(actor);
+  return {
+    prevValue:   actor.system.stamina.value,
+    prevTemp:    actor.system.stamina.temporary,
+    squadGroup:  sg,
+    prevSquadHP: sg?.system?.staminaValue ?? null,
+    squadCombatantIds: sg ? Array.from(sg.members || []).filter(m => m).map(m => m.id) : []
+  };
+};
 
 export const hasFly = (actor) => {
   const types = actor?.system?.movement?.types;

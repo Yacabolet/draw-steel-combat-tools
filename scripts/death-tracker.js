@@ -136,14 +136,50 @@ export function registerDeathTrackerHooks() {
 
   Hooks.on('updateCombatantGroup', async (group, changes) => {
     if (!getSetting('deathTrackerEnabled') || !game.users.activeGM?.isSelf) return;
-    if (changes.system?.staminaValue === undefined) return;
-    if (changes.system.staminaValue > 0) return;
+    
+    const newHp = changes.system?.staminaValue ?? changes.system?.stamina?.value;
+    if (newHp === undefined) return;
     if (group.type !== 'squad') return;
 
-    for (const combatant of group.members) {
-      const actor = combatant.actor;
-      if (!actor || actor.type === 'hero') continue;
-      await actor.toggleStatusEffect('dead', { active: true });
+    // Filter for pure minions using the newly discovered 'monster.organization' path!
+    const minions = Array.from(group.members || []).filter(m => {
+      if (!m || !m.actor) return false;
+      const sys = m.actor.system;
+      const roleStr = String(sys?.monster?.organization || sys?.role?.value || sys?.role || m.actor.type).toLowerCase().trim();
+      return roleStr === 'minion';
+    });
+
+    if (minions.length === 0) return;
+
+    // SCENARIO 1: SQUAD WIPED (0 HP)
+    if (newHp <= 0) {
+      const updates = [];
+      for (const minion of minions) {
+         if (minion.actor && !minion.actor.statuses?.has('dead') && !minion.actor.statuses?.has('dying')) {
+            updates.push(minion.actor.toggleStatusEffect('dying', { active: true }));
+         }
+         // Strip them from the group to correctly recalculate max HP
+         updates.push(minion.update({ groupId: null })); 
+      }
+      await Promise.allSettled(updates);
+      return;
+    }
+
+    // SCENARIO 2: SQUAD BREAKPOINT (1+ Minions need to die)
+    const indivHP = minions[0].actor?.system?.stamina?.max || 1;
+    const currentCount = minions.length;
+    const expectedCount = Math.ceil(newHp / indivHP);
+    const numToKill = currentCount - expectedCount;
+
+    if (numToKill > 0) {
+       const api = game.modules.get('draw-steel-combat-tools')?.api;
+       if (api?.powerWordKill) {
+           api.powerWordKill({
+               maxTargets: numToKill,
+               squadGroup: group,
+               minions: minions
+           });
+       }
     }
   });
 
@@ -305,24 +341,34 @@ const executeRevival = async (tokenId, explicitTile = null) => {
   ui.notifications.info(`${tokenDoc.name} has been revived!`);
 };
 
-export const runPowerWordKillUI = () => {
+export const runPowerWordKillUI = (options = {}) => {
   if (!game.user.isGM) {
     ui.notifications.warn("POWER WORD: KILL is a GM-only tool.");
     return;
   }
 
   if (window._pwkActive) return;
+
+  const maxTargets = options.maxTargets || Infinity;
+  const squadGroup = options.squadGroup || null;
+  const minionCombatants = options.minions || [];
+
   window._pwkActive = true;
 
-  const npcs = canvas.tokens.placeables.filter(t => 
-    t.actor && 
-    t.actor.type !== 'hero' && 
-    !t.document.hidden && 
-    (t.actor.system?.stamina?.value > 0)
-  );
+  let npcs = [];
+  if (squadGroup) {
+      const minionIds = new Set(minionCombatants.map(c => c.tokenId));
+      npcs = canvas.tokens.placeables.filter(t => 
+          minionIds.has(t.id) && !t.actor.statuses?.has('dying') && !t.actor.statuses?.has('dead')
+      );
+  } else {
+      npcs = canvas.tokens.placeables.filter(t => 
+        t.actor && t.actor.type !== 'hero' && !t.document.hidden && (t.actor.system?.stamina?.value > 0)
+      );
+  }
 
   if (!npcs.length) {
-    ui.notifications.warn("No valid NPCs found on the board.");
+    ui.notifications.warn("No valid targets found on the board.");
     window._pwkActive = false;
     return;
   }
@@ -333,12 +379,21 @@ export const runPowerWordKillUI = () => {
   
   const selectedTokens = new Set();
 
+  // Auto-Select targeted tokens if this was triggered by a breakpoint
+  if (squadGroup) {
+      for (const t of game.user.targets) {
+          if (npcs.some(n => n.id === t.id) && selectedTokens.size < maxTargets) {
+              selectedTokens.add(t.id);
+          }
+      }
+  }
+
   const drawHighlights = () => {
     canvas.grid.clearHighlightLayer(hlName);
     for (const npc of npcs) {
       const isSelected = selectedTokens.has(npc.id);
-      const color = isSelected ? 0xFF0000 : 0xFF8800; 
-      const border = isSelected ? 0xAA0000 : 0xAA4400;
+      const color = isSelected ? 0xFF0000 : (squadGroup ? 0x8800AA : 0xFF8800); 
+      const border = isSelected ? 0xAA0000 : (squadGroup ? 0x440088 : 0xAA4400);
 
       const w = Math.max(1, Math.round(npc.document.width));
       const h = Math.max(1, Math.round(npc.document.height));
@@ -354,7 +409,10 @@ export const runPowerWordKillUI = () => {
   };
 
   drawHighlights();
-  ui.notifications.info("POWER WORD: KILL | Click NPCs to select them, press ENTER to execute, or Right-Click/Escape to cancel.");
+  const infoMsg = squadGroup 
+    ? `SQUAD BREAKPOINT | Select ${maxTargets} minion(s) to die. Press ENTER to confirm.`
+    : `POWER WORD: KILL | Click NPCs to select them, press ENTER to execute, or Right-Click to cancel.`;
+  ui.notifications.info(infoMsg);
 
   const finish = () => {
     window._pwkActive = false;
@@ -366,7 +424,7 @@ export const runPowerWordKillUI = () => {
   const onClick = (event) => {
     if (event.data.originalEvent.button === 2) {
       finish();
-      ui.notifications.info("POWER WORD: KILL cancelled.");
+      ui.notifications.info(squadGroup ? "Squad Breakpoint cancelled." : "POWER WORD: KILL cancelled.");
       return;
     }
     
@@ -386,6 +444,10 @@ export const runPowerWordKillUI = () => {
     if (selectedTokens.has(targetId)) {
         selectedTokens.delete(targetId);
     } else {
+        if (selectedTokens.size >= maxTargets) {
+            ui.notifications.warn(`You can only select up to ${maxTargets} target(s).`);
+            return;
+        }
         selectedTokens.add(targetId);
     }
     
@@ -396,30 +458,40 @@ export const runPowerWordKillUI = () => {
     if (event.key === 'Enter') {
       event.preventDefault(); 
       finish();
-      
-      // --- NEW: Clear native token selection ---
       canvas.tokens.releaseAll(); 
       
       if (selectedTokens.size === 0) {
-        ui.notifications.warn("No targets selected for POWER WORD: KILL.");
+        ui.notifications.warn("No targets selected.");
         return;
       }
 
-      // --- UPDATED: Batch Execute 'dead' ONLY. No Stamina modification! ---
       const deadUpdates = [];
       for (const id of selectedTokens) {
         const t = canvas.tokens.get(id);
         if (t && t.actor) {
-           deadUpdates.push(t.actor.toggleStatusEffect('dead', { active: true }));
+           if (squadGroup) {
+               // Squad logic uses 'dying' and removes from group to calculate HP
+               if (!t.actor.statuses?.has('dead') && !t.actor.statuses?.has('dying')) {
+                   deadUpdates.push(t.actor.toggleStatusEffect('dying', { active: true }));
+               }
+               const combatant = minionCombatants.find(c => c.tokenId === id);
+               if (combatant) deadUpdates.push(combatant.update({ groupId: null }));
+           } else {
+               // Manual PWK uses 'dead'
+               if (!t.actor.statuses?.has('dead')) {
+                   deadUpdates.push(t.actor.toggleStatusEffect('dead', { active: true }));
+               }
+           }
         }
       }
       await Promise.allSettled(deadUpdates);
       
-      ui.notifications.warn(selectedTokens.size > 1 ? 'MASS POWER WORD: KILL' : 'POWER WORD: KILL');
+      const finalMsg = squadGroup ? `Squad Breakpoint: Killed ${selectedTokens.size} minion(s).` : (selectedTokens.size > 1 ? 'MASS POWER WORD: KILL' : 'POWER WORD: KILL');
+      ui.notifications.info(finalMsg);
       
     } else if (event.key === 'Escape') {
       finish();
-      ui.notifications.info("POWER WORD: KILL cancelled.");
+      ui.notifications.info("Selection cancelled.");
     }
   };
 

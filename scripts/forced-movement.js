@@ -325,7 +325,7 @@ const applyFallDamage = async (targetToken, finalElev, landingGrid, agility, can
 
 const buildUndoLog = (targetToken, startPos, startElevSnap, movedSnap, undoOps) => [
   { op: 'update',  uuid: targetToken.document.uuid, data: { x: startPos.x, y: startPos.y, elevation: startElevSnap }, options: { animate: false, teleport: true } },
-  { op: 'stamina', uuid: targetToken.actor.uuid, prevValue: movedSnap.prevValue, prevTemp: movedSnap.prevTemp, squadGroupUuid: movedSnap.squadGroup?.uuid ?? null, prevSquadHP: movedSnap.prevSquadHP },
+  { op: 'stamina', uuid: targetToken.actor.uuid, prevValue: movedSnap.prevValue, prevTemp: movedSnap.prevTemp, squadGroupUuid: movedSnap.squadGroup?.uuid ?? null, prevSquadHP: movedSnap.prevSquadHP, squadCombatantIds: movedSnap.squadCombatantIds },
   ...undoOps,
 ];
 
@@ -890,9 +890,10 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
         if (blockerPrev && sharedGroup && prevSharedHP !== null) {
           blockerPrev.squadGroup  = sharedGroup;
           blockerPrev.prevSquadHP = prevSharedHP;
+          blockerPrev.squadCombatantIds = Array.from(sharedGroup.members || []).filter(m => m).map(m => m.id);
         }
         if (blockerPrev) {
-          undoOps.push({ op: 'stamina', uuid: blocker.actor.uuid, prevValue: blockerPrev.prevValue, prevTemp: blockerPrev.prevTemp, squadGroupUuid: blockerPrev.squadGroup?.uuid ?? null, prevSquadHP: blockerPrev.prevSquadHP });
+          undoOps.push({ op: 'stamina', uuid: blocker.actor.uuid, prevValue: blockerPrev.prevValue, prevTemp: blockerPrev.prevTemp, squadGroupUuid: blockerPrev.squadGroup?.uuid ?? null, prevSquadHP: blockerPrev.prevSquadHP, squadCombatantIds: blockerPrev.squadCombatantIds });
         }
 
         const dmgTotal  = remaining + bonusCreatureDmg;
@@ -1478,32 +1479,97 @@ export const toggleForcedMovementPanel = () => {
 const handleStaminaRevival = async (undoLog) => {
   const staminaOps   = undoLog.filter(op => op.op === 'stamina');
   const revivedNames = [];
+  
+  // Use Token ID mapping so multiple minions of the same type don't overwrite each other!
+  const tokensToRevive = new Map(); 
+  const squadMembersToRestore = []; 
+
   for (const op of staminaOps) {
     const actor = await fromUuid(op.uuid);
-    if (!actor) continue;
-    const tokens = canvas.scene.tokens.filter(t => t.actor?.id === actor.id);
-    for (const token of tokens) {
-      const skulls = canvas.scene.tiles.filter(t => t.flags?.['draw-steel-combat-tools']?.deadTokenId === token.id);
-      let revivedFromDeath = false;
-      // FALLBACK CHECK: Even if the 'dead' status vanished, if they have a skull, they died!
-      if (token.actor.statuses?.has('dead') || skulls.length > 0) {
-        if (token.actor.statuses?.has('dead')) await safeToggleStatusEffect(token.actor, 'dead', { active: false });
-        revivedFromDeath = true;
-      }
-      if (token.hidden) await safeUpdate(token, { hidden: false });
-      for (const skull of skulls) await safeDelete(skull);
-      const combatant = game.combat?.combatants.find(c => c.tokenId === token.id);
-      if (combatant && combatant.hidden) await safeUpdate(combatant, { hidden: false });
-      if (revivedFromDeath) {
-        const deathMsgs = game.messages.filter(m =>
-          m.getFlag('draw-steel-combat-tools', 'isDeathMessage') &&
-          m.getFlag('draw-steel-combat-tools', 'deadTokenId') === token.id
-        );
-        for (const dm of deathMsgs) await safeDelete(dm);
-        revivedNames.push(token.name);
-      }
+    if (actor) {
+        if (actor.isToken) {
+            tokensToRevive.set(actor.token.id, actor.token);
+        } else {
+            const sceneTokens = canvas.scene.tokens.filter(t => t.actor?.id === actor.id);
+            for (const st of sceneTokens) tokensToRevive.set(st.id, st);
+        }
+    }
+
+    if (op.squadGroupUuid && op.prevSquadHP !== null && op.prevSquadHP > 0) {
+        const sg = await fromUuid(op.squadGroupUuid).catch(() => null);
+        if (sg && op.squadCombatantIds) {
+            const ids = Array.isArray(op.squadCombatantIds) ? op.squadCombatantIds : Object.values(op.squadCombatantIds);
+            for (const cid of ids) {
+                const c = game.combat?.combatants.get(cid);
+                if (c && c.token) {
+                    squadMembersToRestore.push({ combatant: c, groupId: sg.id });
+                    tokensToRevive.set(c.tokenId, c.token);
+                }
+            }
+        }
     }
   }
+
+  // Process each token strictly sequentially so database updates don't collide!
+  for (const tokenDoc of tokensToRevive.values()) {
+    if (!tokenDoc || !tokenDoc.actor) continue;
+
+    const skulls = canvas.scene.tiles.filter(t => t.flags?.['draw-steel-combat-tools']?.deadTokenId === tokenDoc.id);
+    let revivedFromDeath = false;
+
+    if (tokenDoc.actor.statuses?.has('dead') || tokenDoc.actor.statuses?.has('dying') || skulls.length > 0) {
+      if (tokenDoc.actor.statuses?.has('dead')) await safeToggleStatusEffect(tokenDoc.actor, 'dead', { active: false });
+      if (tokenDoc.actor.statuses?.has('dying')) await safeToggleStatusEffect(tokenDoc.actor, 'dying', { active: false });
+      revivedFromDeath = true;
+    }
+
+    // --- NEW: TELEPORT OUT OF GRAVEYARD & VERIFY ---
+    if (skulls.length > 0 && revivedFromDeath) {
+        const skull = skulls[0];
+        const gx = Math.floor(skull.x / canvas.grid.size) * canvas.grid.size;
+        const gy = Math.floor(skull.y / canvas.grid.size) * canvas.grid.size;
+        
+        // Snap the token back to the board at the skull's exact location
+        await safeUpdate(tokenDoc, { x: gx, y: gy }, { animate: false, teleport: true });
+        
+        // VERIFICATION LOOP: Wait until the token's physical canvas representation arrives!
+        const deadline = Date.now() + 2000;
+        while (Date.now() < deadline) {
+            const live = canvas.scene.tokens.get(tokenDoc.id);
+            if (live && Math.abs(live.x - gx) < 1 && Math.abs(live.y - gy) < 1) break;
+            await new Promise(r => setTimeout(r, 50));
+        }
+    }
+
+    if (tokenDoc.hidden) await safeUpdate(tokenDoc, { hidden: false });
+    
+    // Clean up skulls now that the token is safely standing on top of them
+    for (const skull of skulls) {
+        await safeDelete(skull);
+    }
+
+    // Restore to combat tracker vision
+    const combatant = game.combat?.combatants.find(c => c.tokenId === tokenDoc.id);
+    if (combatant && combatant.hidden) await safeUpdate(combatant, { hidden: false });
+
+    // Clean up old death chat messages
+    if (revivedFromDeath) {
+      const deathMsgs = game.messages.filter(m =>
+        m.getFlag('draw-steel-combat-tools', 'isDeathMessage') &&
+        m.getFlag('draw-steel-combat-tools', 'deadTokenId') === tokenDoc.id
+      );
+      for (const dm of deathMsgs) await safeDelete(dm);
+      revivedNames.push(tokenDoc.name);
+    }
+  }
+
+  // Restore squad memberships!
+  for (const { combatant, groupId } of squadMembersToRestore) {
+      if (combatant.groupId !== groupId) {
+          await safeUpdate(combatant, { groupId: groupId });
+      }
+  }
+
   return revivedNames;
 };
 
