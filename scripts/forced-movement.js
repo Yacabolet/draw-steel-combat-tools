@@ -153,13 +153,14 @@ const breakTileFromTop = async (tile, fallDmg, undoOps, collisionMsgs, targetTok
   for (const w of walls) await safeUpdate(w, { 'flags.wall-height.top': newTop });
   if (game.user.isGM) {
     if (prevDamagedTag) await removeTags(tile, [prevDamagedTag]);
-    await addTags(tile, [`damaged:${newDamagedN}`]);
+    await addTags(tile, [`damaged:${newDamagedN}`, 'partially-broken']);
   }
 
   for (const w of walls) {
     undoOps.push({ op: 'update', uuid: w.uuid, data: { 'flags.wall-height.top': tileTop } });
   }
   undoOps.push({ op: 'removeTags', uuid: tile.document.uuid, tags: [`damaged:${newDamagedN}`] });
+  if (!prevDamagedTag) undoOps.push({ op: 'removeTags', uuid: tile.document.uuid, tags: ['partially-broken'] });
   if (prevDamagedTag) undoOps.push({ op: 'addTags', uuid: tile.document.uuid, tags: [prevDamagedTag] });
 
   collisionMsgs.push(`${targetToken.name} breaks ${squaresBroken} square${squaresBroken !== 1 ? 's' : ''} off the top of the ${mat} object (${tileHeight} tall, now ${newTop - tileBottom} remain).`);
@@ -182,17 +183,18 @@ const splitTileAtElevation = async (tile, splitElev, undoOps, collisionMsgs) => 
   const botTag = `wall-block-${origId}-bot`;
   const topTag = `wall-block-${origId}-top`;
 
+  const squaresLost = tileTop - splitElev;
   for (const w of walls) {
     await safeUpdate(w, { 'flags.wall-height.top': splitElev });
     if (game.user.isGM) {
       await removeTags(w, [blockTag]);
-      await addTags(w, [botTag, 'damaged:0']);
+      await addTags(w, [botTag, `damaged:${squaresLost}`]);
     }
   }
 
   if (game.user.isGM) {
     await removeTags(tile, [blockTag]);
-    await addTags(tile, [botTag]);
+    await addTags(tile, [botTag, 'partially-broken']);
   }
 
   const tg = toGrid(tile.document);
@@ -234,10 +236,10 @@ const splitTileAtElevation = async (tile, splitElev, undoOps, collisionMsgs) => 
   if (createdTileUuid) undoOps.push({ op: 'delete', uuid: createdTileUuid });
   for (const w of walls) {
     undoOps.push({ op: 'update',     uuid: w.uuid, data: { 'flags.wall-height.top': tileTop, ...restrict } });
-    undoOps.push({ op: 'removeTags', uuid: w.uuid, tags: [botTag, 'damaged:0'] });
+    undoOps.push({ op: 'removeTags', uuid: w.uuid, tags: [botTag, `damaged:${squaresLost}`] });
     undoOps.push({ op: 'addTags',    uuid: w.uuid, tags: [blockTag] });
   }
-  undoOps.push({ op: 'removeTags', uuid: tile.document.uuid, tags: [botTag] });
+  undoOps.push({ op: 'removeTags', uuid: tile.document.uuid, tags: [botTag, 'partially-broken'] });
   undoOps.push({ op: 'addTags',    uuid: tile.document.uuid, tags: [blockTag] });
 };
 
@@ -322,7 +324,7 @@ const applyFallDamage = async (targetToken, finalElev, landingGrid, agility, can
 };
 
 const buildUndoLog = (targetToken, startPos, startElevSnap, movedSnap, undoOps) => [
-  { op: 'update',  uuid: targetToken.document.uuid, data: { x: startPos.x, y: startPos.y, elevation: startElevSnap }, options: { animate: false } },
+  { op: 'update',  uuid: targetToken.document.uuid, data: { x: startPos.x, y: startPos.y, elevation: startElevSnap }, options: { animate: false, teleport: true } },
   { op: 'stamina', uuid: targetToken.actor.uuid, prevValue: movedSnap.prevValue, prevTemp: movedSnap.prevTemp, squadGroupUuid: movedSnap.squadGroup?.uuid ?? null, prevSquadHP: movedSnap.prevSquadHP },
   ...undoOps,
 ];
@@ -447,7 +449,7 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
           } else {
               ui.notifications.warn("DSCT | Auto-Path failed: Source and Target are in the exact same spot.");
           }
-      } else if (type === 'Slide' || type === 'Shift') {
+      } else if (type === 'Slide') {
           ui.notifications.warn(`DSCT | Fast Move is only available for Push and Pull. Falling back to manual pathing.`);
       }
   }
@@ -967,7 +969,14 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
       const stepElev  = isVertical && reduced > 0
         ? startElev + Math.round(reducedVert * (s + 1) / reduced)
         : startElev;
-      await safeUpdate(targetToken.document, { x: stepWorld.x, y: stepWorld.y, elevation: stepElev });
+      // Update elevation before position so Foundry's wall check runs against the
+      // already-raised elevation. If x/y and elevation are updated together, Foundry
+      // checks the wall using the token's old (pre-update) elevation, blocking passage
+      // over walls the token has already risen above.
+      if (isVertical && stepElev !== (targetToken.document.elevation ?? 0)) {
+        await safeUpdate(targetToken.document, { elevation: stepElev });
+      }
+      await safeUpdate(targetToken.document, { x: stepWorld.x, y: stepWorld.y });
       await new Promise(r => setTimeout(r, getSetting('animationStepDelay')));
     }
     const finalElev = isVertical && reduced > 0
@@ -1301,7 +1310,7 @@ export class ForcedMovementPanel extends Application {
             <div style="color:${p.text};font-size:${s(9)}px;">Distance</div>
             <div style="display:flex;gap:${s(3)}px;">
               <select id="fm-type" style="width:${s(60)}px;">
-                <option value="Push">Push</option><option value="Pull">Pull</option><option value="Slide">Slide</option><option value="Shift">Shift</option>
+                <option value="Push">Push</option><option value="Pull">Pull</option><option value="Slide">Slide</option>
               </select>
               <input type="number" id="fm-dist" value="1" min="1" step="1" style="width:${s(30)}px;text-align:center;" title="Squares">
             </div>

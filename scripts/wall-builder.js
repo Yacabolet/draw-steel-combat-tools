@@ -10,7 +10,7 @@ const s = n => Math.round(n * SCALE);
 
 const MATERIALS       = ['glass', 'wood', 'stone', 'metal'];
 const MATERIAL_COLORS = { glass: 0x88ddff, wood: 0xaa6622, stone: 0x888888, metal: 0x4488aa };
-const MODE_COLORS     = { build: 0x44cc44, destroy: 0xcc4444, fix: 0x44aacc, transmute: 0xcc8800, break: 0xff6600 };
+const MODE_COLORS     = { build: 0x44cc44, destroy: 0xcc4444, fix: 0x44aacc, transmute: 0xcc8800, break: 0xff6600, inspect: 0xaaaaff };
 
 const palette = () => document.body.classList.contains('theme-dark') ? {
   bg: '#0e0c14', bgBtn: '#1a1628',
@@ -64,9 +64,15 @@ const placeBlock = async (gx, gy, material, heightBottom = '', heightTop = '', i
   if (heightTop    !== '') heightFlags['wall-height'] = { ...(heightFlags['wall-height'] ?? {}), top: heightTop };
 
   for (const [x1, y1, x2, y2] of wallEdges(gx, gy)) {
+    const overlapping = canvas.scene.walls.contents.find(w =>
+      (w.c[0] === x1 && w.c[1] === y1 && w.c[2] === x2 && w.c[3] === y2) ||
+      (w.c[0] === x2 && w.c[1] === y2 && w.c[2] === x1 && w.c[3] === y1)
+    );
+    if (overlapping && overlapping.sight !== 0) await overlapping.update({ sight: 0 });
+    const wallSight = overlapping ? 0 : restrict.sight;
     const [wall] = await canvas.scene.createEmbeddedDocuments('Wall', [{
       c: [x1, y1, x2, y2],
-      move: restrict.move, sight: restrict.sight,
+      move: restrict.move, sight: wallSight,
       light: restrict.light, sound: restrict.sound,
       dir: 0, door: 0,
       flags: Object.keys(heightFlags).length ? heightFlags : {},
@@ -77,6 +83,43 @@ const placeBlock = async (gx, gy, material, heightBottom = '', heightTop = '', i
   return { tileId: tile.id, blockId };
 };
 
+// When a wall is removed or broken, restore sight on any wall sharing the same edge
+// to that wall's own material default (glass stays at 0 always).
+const restoreOverlappingSight = async (wall) => {
+  const [x1, y1, x2, y2] = wall.c;
+  const partners = canvas.scene.walls.contents.filter(w =>
+    w.id !== wall.id &&
+    ((w.c[0] === x1 && w.c[1] === y1 && w.c[2] === x2 && w.c[3] === y2) ||
+     (w.c[0] === x2 && w.c[1] === y2 && w.c[2] === x1 && w.c[3] === y1))
+  );
+  for (const pw of partners) {
+    const pwMat = (pw.flags?.tagger?.tags ?? []).find(t => MATERIALS.includes(t));
+    if (pwMat === 'glass') continue;
+    const targetSight = WALL_RESTRICTIONS()[pwMat ?? 'stone']?.sight ?? 10;
+    if (pw.sight !== targetSight) await pw.update({ sight: targetSight });
+  }
+};
+
+// When a wall is fixed/restored, re-suppress sight on it and any non-broken overlap partner.
+const suppressOverlappingSight = async (wall) => {
+  const wallMat = (wall.flags?.tagger?.tags ?? []).find(t => MATERIALS.includes(t));
+  if (wallMat === 'glass') return;
+  const [x1, y1, x2, y2] = wall.c;
+  const partners = canvas.scene.walls.contents.filter(w =>
+    w.id !== wall.id &&
+    !(w.flags?.tagger?.tags ?? []).includes('broken') &&
+    ((w.c[0] === x1 && w.c[1] === y1 && w.c[2] === x2 && w.c[3] === y2) ||
+     (w.c[0] === x2 && w.c[1] === y2 && w.c[2] === x1 && w.c[3] === y1))
+  );
+  if (partners.length === 0) return;
+  if (wall.sight !== 0) await wall.update({ sight: 0 });
+  for (const pw of partners) {
+    const pwMat = (pw.flags?.tagger?.tags ?? []).find(t => MATERIALS.includes(t));
+    if (pwMat === 'glass') continue;
+    if (pw.sight !== 0) await pw.update({ sight: 0 });
+  }
+};
+
 const breakBlock = async (tile) => {
   const blockTag = getBlockTag(tile);
   if (!blockTag) return;
@@ -84,6 +127,7 @@ const breakBlock = async (tile) => {
   for (const wall of walls) {
     await wall.update({ move: 0, sight: 0, light: 0, sound: 0 });
     await addTags(wall, ['broken']);
+    await restoreOverlappingSight(wall);
   }
   await tile.document.update({ 'texture.src': MATERIAL_ICONS.broken, alpha: 0.8 });
   await addTags(tile, ['broken']);
@@ -106,9 +150,10 @@ const fixBlock = async (tile) => {
       await wall.update({ 'flags.wall-height.top': currentTop + squaresBack });
     }
     await removeTags(wall, ['broken']);
+    await suppressOverlappingSight(wall);
   }
   await tile.document.update({ 'texture.src': MATERIAL_ICONS[material], alpha: MATERIAL_ALPHA[material] ?? 0.8 });
-  await removeTags(tile, ['broken']);
+  await removeTags(tile, ['broken', 'partially-broken']);
   if (damagedTag) await removeTags(tile, [damagedTag]);
 };
 
@@ -116,7 +161,10 @@ const destroyBlock = async (tile) => {
   const blockTag = getBlockTag(tile);
   if (blockTag) {
     const walls = getBlockWalls(blockTag);
-    for (const wall of walls) await wall.delete();
+    for (const wall of walls) {
+      await restoreOverlappingSight(wall);
+      await wall.delete();
+    }
   }
   await tile.document.delete();
 };
@@ -180,15 +228,17 @@ export class WallBuilderPanel extends Application {
           for (const tile of canvas.tiles.placeables) {
             if (!hasTags(tile, 'obstacle')) continue;
             const tg       = toGrid(tile.document);
-            const isBroken = hasTags(tile, 'broken');
-            const mat      = getTags(tile).find(t => MATERIALS.includes(t));
+            const isBroken        = hasTags(tile, 'broken');
+            const isPartialBroken = hasTags(tile, 'partially-broken');
+            const isFixable       = isBroken || isPartialBroken;
+            const mat             = getTags(tile).find(t => MATERIALS.includes(t));
             let color;
             if (this._mode === 'destroy')       color = 0xcc4444;
-            else if (this._mode === 'fix')       color = isBroken ? 0x44aacc : 0x334455;
+            else if (this._mode === 'fix')       color = isFixable ? (isPartialBroken && !isBroken ? 0x88ccff : 0x44aacc) : 0x334455;
             else if (this._mode === 'transmute') color = mat ? (MATERIAL_COLORS[mat] ?? 0x888888) : 0x888888;
             else if (this._mode === 'break')     color = isBroken ? 0x444444 : 0xff6600;
             else                                 color = isBroken ? 0xcc4444 : 0x44cc44;
-            const alpha = isBroken ? 0.35 : 0.2;
+            const alpha = isFixable ? 0.35 : 0.2;
             graphics.beginFill(color, alpha);
             graphics.lineStyle(1, color, 0.8);
             graphics.drawRect(tg.x * GRID, tg.y * GRID, GRID, GRID);
@@ -239,7 +289,74 @@ export class WallBuilderPanel extends Application {
     });
   }
 
+  async _inspect() {
+    const GRID = getGRID();
+    const p    = palette();
+    const graphics = new PIXI.Graphics();
+    canvas.app.stage.addChild(graphics);
+
+    const tooltip = document.createElement('div');
+    tooltip.style.cssText = `position:fixed;pointer-events:none;z-index:9999;background:${p.bg};border:1px solid ${p.border};color:${p.text};font-family:Georgia,serif;font-size:${s(9)}px;padding:${s(6)}px ${s(8)}px;border-radius:${s(3)}px;white-space:pre;display:none;line-height:1.6;`;
+    document.body.appendChild(tooltip);
+
+    const overlay = new PIXI.Container();
+    overlay.interactive = true;
+    overlay.hitArea = new PIXI.Rectangle(0, 0, canvas.dimensions.width, canvas.dimensions.height);
+    canvas.app.stage.addChild(overlay);
+
+    const onMove = (e) => {
+      const gpos = toGrid(e.data.getLocalPosition(canvas.app.stage));
+      graphics.clear();
+      const tile = canvas.tiles.placeables.find(t => {
+        if (!hasTags(t, 'obstacle')) return false;
+        const tg = toGrid(t.document);
+        return tg.x === gpos.x && tg.y === gpos.y;
+      });
+      if (tile) {
+        graphics.beginFill(0xaaaaff, 0.25);
+        graphics.drawRect(gpos.x * GRID, gpos.y * GRID, GRID, GRID);
+        graphics.endFill();
+        const tags        = getTags(tile);
+        const mat         = tags.find(t => MATERIALS.includes(t)) ?? '(none)';
+        const blockTag    = tags.find(t => t.startsWith('wall-block-')) ?? null;
+        const walls       = blockTag ? getByTag(blockTag).filter(o => Array.isArray(o.c)) : [];
+        const bottom      = walls[0]?.flags?.['wall-height']?.bottom ?? '—';
+        const top         = walls[0]?.flags?.['wall-height']?.top    ?? '—';
+        const isBroken    = hasTags(tile, 'broken');
+        const isPartial   = hasTags(tile, 'partially-broken');
+        const isStable    = hasTags(tile, 'stable');
+        const damagedTag  = tags.find(t => t.startsWith('damaged:'));
+        const damagedN    = damagedTag ? parseInt(damagedTag.split(':')[1]) : 0;
+        const status      = isBroken ? 'Broken' : isPartial ? `Partially Broken (${damagedN} sq off top)` : 'Intact';
+        tooltip.textContent = `Material : ${mat}\nHeight   : ${bottom} – ${top}\nStatus   : ${status}\nStable   : ${isStable ? 'Yes' : 'No'}\nTag      : ${blockTag ?? '(none)'}`;
+        tooltip.style.display = 'block';
+      } else {
+        tooltip.style.display = 'none';
+      }
+      const ev = e.data.originalEvent;
+      if (ev) { tooltip.style.left = `${ev.clientX + 14}px`; tooltip.style.top = `${ev.clientY + 14}px`; }
+    };
+
+    const cleanup = () => {
+      overlay.off('pointermove', onMove);
+      document.removeEventListener('keydown', onKeyDown);
+      canvas.app.stage.removeChild(overlay);
+      canvas.app.stage.removeChild(graphics);
+      graphics.destroy();
+      overlay.destroy();
+      tooltip.remove();
+    };
+
+    return new Promise((resolve) => {
+      const onKeyDown = (e) => { if (e.key === 'Escape') { cleanup(); resolve(); } };
+      overlay.on('pointermove', onMove);
+      document.addEventListener('keydown', onKeyDown);
+      ui.notifications.info('Inspect: hover tiles to see info. Escape to exit.');
+    });
+  }
+
   async _execute() {
+    if (this._mode === 'inspect') { await this._inspect(); return; }
     const squares = await this._selectSquares(this._mode !== 'build');
     if (!squares || squares.length === 0) { ui.notifications.info('Cancelled.'); return; }
 
@@ -268,7 +385,7 @@ export class WallBuilderPanel extends Application {
     else if (this._mode === 'fix') {
       for (const { x, y } of squares) {
         const tile = tileAt(x, y);
-        if (!tile || !hasTags(tile, 'broken')) { ui.notifications.warn(`No broken wall block at (${x},${y}).`); continue; }
+        if (!tile || (!hasTags(tile, 'broken') && !hasTags(tile, 'partially-broken'))) { ui.notifications.warn(`No broken wall block at (${x},${y}).`); continue; }
         const blockTag     = getBlockTag(tile);
         const walls        = blockTag ? getBlockWalls(blockTag) : [];
         const prevWallData = walls.map(w => ({ wall: w, restrict: { move: w.move, sight: w.sight, light: w.light, sound: w.sound } }));
@@ -319,13 +436,15 @@ export class WallBuilderPanel extends Application {
   _refreshPanel() {
     if (!this._html) return;
     const p = palette();
-    const modes = ['build', 'destroy', 'fix', 'transmute', 'break'];
+    const modes = ['build', 'destroy', 'fix', 'transmute', 'break', 'inspect'];
     for (const mode of modes) {
       const btn = this._html.find(`#wb-mode-${mode}`)[0];
       if (btn) { btn.style.borderColor = this._mode === mode ? p.accent : p.border; btn.style.color = this._mode === mode ? p.accent : p.text; }
     }
     const matRow = this._html.find('#wb-material-row')[0];
     if (matRow) matRow.style.display = (this._mode === 'build' || this._mode === 'transmute') ? 'flex' : 'none';
+    const execBtn = this._html.find('[data-action="execute"]')[0];
+    if (execBtn) execBtn.textContent = this._mode === 'inspect' ? 'Start Inspect' : 'Select Squares';
     const heightRow = this._html.find('#wb-height-row')[0];
     if (heightRow) heightRow.style.display = this._mode === 'build' ? 'flex' : 'none';
     for (const mat of MATERIALS) {
@@ -359,7 +478,8 @@ export class WallBuilderPanel extends Application {
           <button id="wb-mode-destroy"   data-mode="destroy"   style="padding:${s(5)}px;border-radius:${s(3)}px;cursor:pointer;font-size:${s(9)}px;background:${p.bgBtn};border:1px solid ${this._mode==='destroy'?p.accent:p.border};color:${this._mode==='destroy'?p.accent:p.text};">Destroy</button>
           <button id="wb-mode-fix"       data-mode="fix"       style="padding:${s(5)}px;border-radius:${s(3)}px;cursor:pointer;font-size:${s(9)}px;background:${p.bgBtn};border:1px solid ${this._mode==='fix'?p.accent:p.border};color:${this._mode==='fix'?p.accent:p.text};">Fix</button>
           <button id="wb-mode-transmute" data-mode="transmute" style="padding:${s(5)}px;border-radius:${s(3)}px;cursor:pointer;font-size:${s(9)}px;background:${p.bgBtn};border:1px solid ${this._mode==='transmute'?p.accent:p.border};color:${this._mode==='transmute'?p.accent:p.text};">Transmute</button>
-          <button id="wb-mode-break"     data-mode="break"     style="padding:${s(5)}px;border-radius:${s(3)}px;cursor:pointer;font-size:${s(9)}px;grid-column:span 2;background:${p.bgBtn};border:1px solid ${this._mode==='break'?p.accent:p.border};color:${this._mode==='break'?p.accent:p.text};">Break</button>
+          <button id="wb-mode-break"     data-mode="break"     style="padding:${s(5)}px;border-radius:${s(3)}px;cursor:pointer;font-size:${s(9)}px;background:${p.bgBtn};border:1px solid ${this._mode==='break'?p.accent:p.border};color:${this._mode==='break'?p.accent:p.text};">Break</button>
+          <button id="wb-mode-inspect"   data-mode="inspect"   style="padding:${s(5)}px;border-radius:${s(3)}px;cursor:pointer;font-size:${s(9)}px;background:${p.bgBtn};border:1px solid ${this._mode==='inspect'?p.accent:p.border};color:${this._mode==='inspect'?p.accent:p.text};">Inspect</button>
         </div>
 
         <div id="wb-material-row" style="display:${(this._mode==='build'||this._mode==='transmute')?'flex':'none'};flex-direction:column;gap:${s(4)}px;margin-bottom:${s(8)}px;">
