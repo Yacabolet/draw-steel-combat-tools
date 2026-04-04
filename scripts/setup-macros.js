@@ -140,8 +140,9 @@ await game.modules.get('draw-steel-combat-tools').api.renameSquads();`
     command:
 `// Manually applies the Unspent Triggered Action tracker to combatants.
 // Normally runs automatically at combat start when the setting is enabled.
-// Optional mode argument: 'ALL' (default), 'HEROES', or 'NPCS'.
-await game.modules.get('draw-steel-combat-tools').api.triggeredActions('ALL');`
+// Uses the "Triggered Action Tracker Targets" module setting by default.
+// Pass an explicit mode to override: 'ALL', 'HEROES', 'NPCS', or 'TARGETED'.
+await game.modules.get('draw-steel-combat-tools').api.triggeredActions();`
   },
   {
     name: 'DSCT: Distribute Abilities',

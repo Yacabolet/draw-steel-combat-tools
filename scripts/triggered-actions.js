@@ -42,7 +42,8 @@ const disableEffect = async (actor) => {
   if (effect && !effect.disabled) await safeUpdate(effect, { disabled: true });
 };
 
-export const applyTriggeredActions = async (mode = 'ALL', silent = false) => {
+export const applyTriggeredActions = async (mode = null, silent = false) => {
+  const resolvedMode = mode ?? getSetting('autoTriggeredActionsTarget');
   
   
   if (!game.combat) {
@@ -51,37 +52,37 @@ export const applyTriggeredActions = async (mode = 'ALL', silent = false) => {
   }
 
   const targetedIds = new Set([...game.user.targets].map(t => t.actor?.id).filter(Boolean));
-  if (mode === 'TARGETED' && !targetedIds.size) {
+  if (resolvedMode === 'TARGETED' && !targetedIds.size) {
     if (!silent) ui.notifications.warn('Target at least one token for TARGETED mode.');
     return;
   }
 
-  
+
   for (const token of canvas.tokens.placeables) {
     const actor = token.actor;
     if (!actor) continue;
     const effect = actor.effects.find(e => e.origin === TRIGGER_ORIGIN);
     if (!effect) continue;
 
-    if (!shouldApply(actor, mode, targetedIds)) {
+    if (!shouldApply(actor, resolvedMode, targetedIds)) {
       await safeDelete(effect);
     }
   }
 
-  
+
   for (const combatant of game.combat.combatants.contents) {
     const actor = getActorFromCombatant(combatant);
     if (!actor) continue;
 
-    if (shouldApply(actor, mode, targetedIds)) {
+    if (shouldApply(actor, resolvedMode, targetedIds)) {
       await enableEffect(actor);
     }
   }
 
   if (!silent) {
-    const modeLabel = mode === 'TARGETED' ? `${targetedIds.size} targeted tokens` :
-                      mode === 'HEROES'   ? 'heroes only' :
-                      mode === 'NPCS'     ? 'NPCs only' : `${game.combat.combatants.size} combatants`;
+    const modeLabel = resolvedMode === 'TARGETED' ? `${targetedIds.size} targeted tokens` :
+                      resolvedMode === 'HEROES'   ? 'heroes only' :
+                      resolvedMode === 'NPCS'     ? 'NPCs only' : `${game.combat.combatants.size} combatants`;
     ui.notifications.info(`Triggered Action Tracker active (${modeLabel}).`);
   }
 };
