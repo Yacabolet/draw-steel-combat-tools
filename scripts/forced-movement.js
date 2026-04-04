@@ -325,7 +325,7 @@ const applyFallDamage = async (targetToken, finalElev, landingGrid, agility, can
 
 const buildUndoLog = (targetToken, startPos, startElevSnap, movedSnap, undoOps) => [
   { op: 'update',  uuid: targetToken.document.uuid, data: { x: startPos.x, y: startPos.y, elevation: startElevSnap }, options: { animate: false, teleport: true } },
-  { op: 'stamina', uuid: targetToken.actor.uuid, prevValue: movedSnap.prevValue, prevTemp: movedSnap.prevTemp, squadGroupUuid: movedSnap.squadGroup?.uuid ?? null, prevSquadHP: movedSnap.prevSquadHP, squadCombatantIds: movedSnap.squadCombatantIds },
+  { op: 'stamina', uuid: targetToken.actor.uuid, prevValue: movedSnap.prevValue, prevTemp: movedSnap.prevTemp, squadGroupUuid: movedSnap.squadGroup?.uuid ?? null, prevSquadHP: movedSnap.prevSquadHP, squadCombatantIds: movedSnap.squadCombatantIds, squadTokenIds: movedSnap.squadTokenIds ?? [] },
   ...undoOps,
 ];
 
@@ -897,12 +897,14 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
         const blockerPrev = noCollisionDamage ? null : await applyDamage(blocker.actor, remaining + bonusCreatureDmg, sharedGroup ? null : blockerSquadGroup);
 
         if (blockerPrev && sharedGroup && prevSharedHP !== null) {
-          blockerPrev.squadGroup  = sharedGroup;
-          blockerPrev.prevSquadHP = prevSharedHP;
-          blockerPrev.squadCombatantIds = Array.from(sharedGroup.members || []).filter(m => m).map(m => m.id);
+          const sharedMembers = Array.from(sharedGroup.members || []).filter(m => m);
+          blockerPrev.squadGroup        = sharedGroup;
+          blockerPrev.prevSquadHP       = prevSharedHP;
+          blockerPrev.squadCombatantIds = sharedMembers.map(m => m.id);
+          blockerPrev.squadTokenIds     = sharedMembers.map(m => m.tokenId).filter(Boolean);
         }
         if (blockerPrev) {
-          undoOps.push({ op: 'stamina', uuid: blocker.actor.uuid, prevValue: blockerPrev.prevValue, prevTemp: blockerPrev.prevTemp, squadGroupUuid: blockerPrev.squadGroup?.uuid ?? null, prevSquadHP: blockerPrev.prevSquadHP, squadCombatantIds: blockerPrev.squadCombatantIds });
+          undoOps.push({ op: 'stamina', uuid: blocker.actor.uuid, prevValue: blockerPrev.prevValue, prevTemp: blockerPrev.prevTemp, squadGroupUuid: blockerPrev.squadGroup?.uuid ?? null, prevSquadHP: blockerPrev.prevSquadHP, squadCombatantIds: blockerPrev.squadCombatantIds, squadTokenIds: blockerPrev.squadTokenIds ?? [] });
         }
 
         const dmgTotal  = remaining + bonusCreatureDmg;
@@ -1497,105 +1499,90 @@ export const toggleForcedMovementPanel = () => {
 const handleStaminaRevival = async (undoLog) => {
   const staminaOps   = undoLog.filter(op => op.op === 'stamina');
   const revivedNames = [];
-  
-  // Use Token ID mapping so multiple minions of the same type don't overwrite each other!
-  const tokensToRevive = new Map(); 
-  const squadMembersToRestore = []; 
+
+  // Collect all token IDs that need revival consideration.
+  // Use a Map keyed by token ID so duplicates are deduplicated.
+  const tokensToRevive = new Map();
 
   for (const op of staminaOps) {
+    // Direct token for the stamina op's actor.
     const actor = await fromUuid(op.uuid);
     if (actor) {
-        if (actor.isToken) {
-            tokensToRevive.set(actor.token.id, actor.token);
-        } else {
-            const sceneTokens = canvas.scene.tokens.filter(t => t.actor?.id === actor.id);
-            for (const st of sceneTokens) tokensToRevive.set(st.id, st);
-        }
+      if (actor.isToken) {
+        tokensToRevive.set(actor.token.id, actor.token);
+      } else {
+        const sceneTokens = canvas.scene.tokens.filter(t => t.actor?.id === actor.id);
+        for (const st of sceneTokens) tokensToRevive.set(st.id, st);
+      }
     }
 
-    if (op.squadGroupUuid && op.prevSquadHP !== null && op.prevSquadHP > 0) {
-        const sg = await fromUuid(op.squadGroupUuid).catch(() => null);
-        if (sg && op.squadCombatantIds) {
-            const ids = Array.isArray(op.squadCombatantIds) ? op.squadCombatantIds : Object.values(op.squadCombatantIds);
-            for (const cid of ids) {
-                const c = game.combat?.combatants.get(cid);
-                if (c && c.token) {
-                    squadMembersToRestore.push({ combatant: c, groupId: sg.id });
-                    tokensToRevive.set(c.tokenId, c.token);
-                }
-            }
-        }
+    // Squad members: use token IDs (persist even after combatant deletion) so dead
+    // minions removed from combat are still found.
+    const tokenIds = Array.isArray(op.squadTokenIds) ? op.squadTokenIds : [];
+    for (const tid of tokenIds) {
+      if (!tokensToRevive.has(tid)) {
+        const t = canvas.scene.tokens.get(tid);
+        if (t) tokensToRevive.set(tid, t);
+      }
     }
   }
 
-  // Process each token strictly sequentially so database updates don't collide!
+  // Process each token strictly sequentially so database updates don't collide.
   for (const tokenDoc of tokensToRevive.values()) {
     if (!tokenDoc || !tokenDoc.actor) continue;
 
-    const skulls = canvas.scene.tiles.filter(t => t.flags?.['draw-steel-combat-tools']?.deadTokenId === tokenDoc.id);
-    let revivedFromDeath = false;
+    const skulls = canvas.scene.tiles.filter(t =>
+      t.flags?.['draw-steel-combat-tools']?.deadTokenId === tokenDoc.id
+    );
+    const isDead  = tokenDoc.actor.statuses?.has('dead');
+    const isDying = tokenDoc.actor.statuses?.has('dying');
 
-    if (tokenDoc.actor.statuses?.has('dead') || tokenDoc.actor.statuses?.has('dying') || skulls.length > 0) {
-      if (tokenDoc.actor.statuses?.has('dead')) await safeToggleStatusEffect(tokenDoc.actor, 'dead', { active: false });
-      if (tokenDoc.actor.statuses?.has('dying')) await safeToggleStatusEffect(tokenDoc.actor, 'dying', { active: false });
-      revivedFromDeath = true;
-    }
+    // Only act if this token actually died — skip living squad members.
+    if (!isDead && !isDying && skulls.length === 0) continue;
 
-    // --- NEW: TELEPORT OUT OF GRAVEYARD & VERIFY ---
-    if (skulls.length > 0 && revivedFromDeath) {
-        const skull = skulls[0];
-        const gx = Math.floor(skull.x / canvas.grid.size) * canvas.grid.size;
-        const gy = Math.floor(skull.y / canvas.grid.size) * canvas.grid.size;
-        
-        // Snap the token back to the board at the skull's exact location
-        await safeUpdate(tokenDoc, { x: gx, y: gy }, { animate: false, teleport: true });
-        
-        // VERIFICATION LOOP: Wait until the token's physical canvas representation arrives!
-        const deadline = Date.now() + 2000;
-        while (Date.now() < deadline) {
-            const live = canvas.scene.tokens.get(tokenDoc.id);
-            if (live && Math.abs(live.x - gx) < 1 && Math.abs(live.y - gy) < 1) break;
-            await new Promise(r => setTimeout(r, 50));
-        }
+    // 1. Remove status effects first so the actor is "alive" before we move the token.
+    if (isDead)  await safeToggleStatusEffect(tokenDoc.actor, 'dead',  { active: false });
+    if (isDying) await safeToggleStatusEffect(tokenDoc.actor, 'dying', { active: false });
+
+    // 2. For each skull: teleport token to its location, confirm arrival, THEN delete skull.
+    for (const skull of skulls) {
+      const gx = Math.floor(skull.x / canvas.grid.size) * canvas.grid.size;
+      const gy = Math.floor(skull.y / canvas.grid.size) * canvas.grid.size;
+
+      await safeUpdate(tokenDoc, { x: gx, y: gy }, { animate: false, teleport: true });
+
+      // Wait until the live canvas token confirms the position before deleting the skull.
+      const deadline = Date.now() + 2000;
+      while (Date.now() < deadline) {
+        const live = canvas.scene.tokens.get(tokenDoc.id);
+        if (live && Math.abs(live.x - gx) < 1 && Math.abs(live.y - gy) < 1) break;
+        await new Promise(r => setTimeout(r, 50));
+      }
+
+      await safeDelete(skull);
     }
 
     if (tokenDoc.hidden) await safeUpdate(tokenDoc, { hidden: false });
-    
-    // Clean up skulls now that the token is safely standing on top of them
-    for (const skull of skulls) {
-        await safeDelete(skull);
-    }
 
-    // Restore combatant in active combat (death tracker deletes it; recreate in original group).
+    // 3. Restore combatant in active combat (death tracker deletes it; recreate in original group).
+    // Do NOT bump squad staminaValue here — replayUndo already restored it to the pre-collision
+    // value via the stamina op. Adding minionMaxHP again would double-count it.
     if (game.combat && !game.combat.combatants.find(c => c.tokenId === tokenDoc.id)) {
       const savedGroupId = tokenDoc.getFlag('draw-steel-combat-tools', 'savedGroupId');
-      const group = savedGroupId ? game.combat.groups.get(savedGroupId) : null;
       const combatantData = { tokenId: tokenDoc.id, sceneId: canvas.scene.id, actorId: tokenDoc.actorId };
-      if (group) combatantData.group = savedGroupId;
+      if (savedGroupId) combatantData.group = savedGroupId;
       await game.combat.createEmbeddedDocuments('Combatant', [combatantData]);
-      if (group) {
-        const minionMaxHP = tokenDoc.actor?.system?.stamina?.max ?? 0;
-        if (minionMaxHP > 0) await group.update({ 'system.staminaValue': group.system.staminaValue + minionMaxHP });
-      }
       if (savedGroupId) await tokenDoc.unsetFlag('draw-steel-combat-tools', 'savedGroupId');
     }
 
-    // Clean up old death chat messages
-    if (revivedFromDeath) {
-      const deathMsgs = game.messages.filter(m =>
-        m.getFlag('draw-steel-combat-tools', 'isDeathMessage') &&
-        m.getFlag('draw-steel-combat-tools', 'deadTokenId') === tokenDoc.id
-      );
-      for (const dm of deathMsgs) await safeDelete(dm);
-      revivedNames.push(tokenDoc.name);
-    }
-  }
+    // 4. Clean up old death chat messages.
+    const deathMsgs = game.messages.filter(m =>
+      m.getFlag('draw-steel-combat-tools', 'isDeathMessage') &&
+      m.getFlag('draw-steel-combat-tools', 'deadTokenId') === tokenDoc.id
+    );
+    for (const dm of deathMsgs) await safeDelete(dm);
 
-  // Restore squad memberships!
-  for (const { combatant, groupId } of squadMembersToRestore) {
-      if (combatant.groupId !== groupId) {
-          await safeUpdate(combatant, { groupId: groupId });
-      }
+    revivedNames.push(tokenDoc.name);
   }
 
   return revivedNames;
