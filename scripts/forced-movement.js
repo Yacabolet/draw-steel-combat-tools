@@ -717,7 +717,16 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
       const moveId = foundry.utils.randomID();
       const fullUndoLog = buildUndoLog(targetToken, startPos, startElev, movedSnap, undoOps);
 
+      if (FM_DEBUG) {
+        const liveSnapV = canvas.scene.tokens.get(targetToken.id);
+        console.log(`DSCT DEBUG | Pre-message snapshot (vert) for ${targetToken.name}: doc.x=${targetToken.document.x}, doc.y=${targetToken.document.y}, doc.elev=${targetToken.document.elevation??0} | live.x=${liveSnapV?.x}, live.y=${liveSnapV?.y}, live.elev=${liveSnapV?.elevation??0} | finalPos will be (${startPos.x},${startPos.y},${vertTargetElev}) | doc===live: ${targetToken.document === liveSnapV}`);
+      }
+
       await safeUpdate(targetToken.document, { 'flags.draw-steel-combat-tools.lastFmMoveId': moveId });
+
+      if (FM_DEBUG) {
+        console.log(`DSCT DEBUG | Assigned moveId=${moveId} to ${targetToken.name} (vert). Confirmed lastFmMoveId=${targetToken.document.getFlag('draw-steel-combat-tools','lastFmMoveId')}`);
+      }
 
       const vertResultData = {
         content:       buildSummary() + (collisionMsgs.length ? '<br>' + collisionMsgs.join('<br>') : ''),
@@ -1021,7 +1030,16 @@ const _runForcedMovement = async (type, distance, targetToken, sourceToken, bonu
     const moveId = foundry.utils.randomID();
     const fullUndoLog = buildUndoLog(targetToken, startPos, startElevSnap, movedSnap, undoOps);
 
+    if (FM_DEBUG) {
+      const liveSnap = canvas.scene.tokens.get(targetToken.id);
+      console.log(`DSCT DEBUG | Pre-message snapshot for ${targetToken.name}: doc.x=${targetToken.document.x}, doc.y=${targetToken.document.y}, doc.elev=${targetToken.document.elevation??0} | live.x=${liveSnap?.x}, live.y=${liveSnap?.y}, live.elev=${liveSnap?.elevation??0} | finalPos will be (${landingWorld.x},${landingWorld.y},${targetElev}) | doc===live: ${targetToken.document === liveSnap}`);
+    }
+
     await safeUpdate(targetToken.document, { 'flags.draw-steel-combat-tools.lastFmMoveId': moveId });
+
+    if (FM_DEBUG) {
+      console.log(`DSCT DEBUG | Assigned moveId=${moveId} to ${targetToken.name}. Confirmed lastFmMoveId=${targetToken.document.getFlag('draw-steel-combat-tools','lastFmMoveId')}`);
+    }
 
     const mainResultData = {
       content:       buildSummary() + (collisionMsgs.length ? '<br>' + collisionMsgs.join('<br>') : ''),
@@ -1548,9 +1566,19 @@ const handleStaminaRevival = async (undoLog) => {
         await safeDelete(skull);
     }
 
-    // Restore to combat tracker vision
-    const combatant = game.combat?.combatants.find(c => c.tokenId === tokenDoc.id);
-    if (combatant && combatant.hidden) await safeUpdate(combatant, { hidden: false });
+    // Restore combatant in active combat (death tracker deletes it; recreate in original group).
+    if (game.combat && !game.combat.combatants.find(c => c.tokenId === tokenDoc.id)) {
+      const savedGroupId = tokenDoc.getFlag('draw-steel-combat-tools', 'savedGroupId');
+      const group = savedGroupId ? game.combat.groups.get(savedGroupId) : null;
+      const combatantData = { tokenId: tokenDoc.id, sceneId: canvas.scene.id, actorId: tokenDoc.actorId };
+      if (group) combatantData.group = savedGroupId;
+      await game.combat.createEmbeddedDocuments('Combatant', [combatantData]);
+      if (group) {
+        const minionMaxHP = tokenDoc.actor?.system?.stamina?.max ?? 0;
+        if (minionMaxHP > 0) await group.update({ 'system.staminaValue': group.system.staminaValue + minionMaxHP });
+      }
+      if (savedGroupId) await tokenDoc.unsetFlag('draw-steel-combat-tools', 'savedGroupId');
+    }
 
     // Clean up old death chat messages
     if (revivedFromDeath) {
@@ -1575,15 +1603,28 @@ const handleStaminaRevival = async (undoLog) => {
 
 // Shared helper: check whether a single message entry is expired.
 const isEntryExpired = (entry) => {
-  if (canvas.scene?.id !== entry.targetSceneId) return true;
+  if (canvas.scene?.id !== entry.targetSceneId) {
+    if (FM_DEBUG) console.log(`DSCT DEBUG | EXPIRED (scene mismatch) targetScene=${entry.targetSceneId} currentScene=${canvas.scene?.id}`);
+    return true;
+  }
   const token = canvas.scene.tokens.get(entry.targetTokenId);
-  if (!token) return true;
+  if (!token) {
+    if (FM_DEBUG) console.log(`DSCT DEBUG | EXPIRED (token deleted) targetTokenId=${entry.targetTokenId}`);
+    return true;
+  }
   const lastMoveId = token.getFlag('draw-steel-combat-tools', 'lastFmMoveId');
-  if (lastMoveId && lastMoveId !== entry.moveId) return true;
+  if (lastMoveId && lastMoveId !== entry.moveId) {
+    if (FM_DEBUG) console.log(`DSCT DEBUG | EXPIRED (moveId mismatch) msg=${entry.moveId} token=${lastMoveId} | target=${token.name}`);
+    return true;
+  }
   if (entry.finalPos) {
     const isDead = token.actor?.statuses?.has('dead') || token.hidden;
     if (!isDead) {
-      if (token.x !== entry.finalPos.x || token.y !== entry.finalPos.y || (token.elevation ?? 0) !== entry.finalPos.elevation) return true;
+      const posMatch = token.x === entry.finalPos.x && token.y === entry.finalPos.y && (token.elevation ?? 0) === entry.finalPos.elevation;
+      if (FM_DEBUG) console.log(`DSCT DEBUG | Position check for ${token.name}: token(${token.x},${token.y},${token.elevation??0}) vs finalPos(${entry.finalPos.x},${entry.finalPos.y},${entry.finalPos.elevation}) | match=${posMatch} | isDead=${isDead} | moveId=${entry.moveId}`);
+      if (!posMatch) return true;
+    } else {
+      if (FM_DEBUG) console.log(`DSCT DEBUG | Skipping pos check for ${token.name}: isDead=${isDead} finalPos=${JSON.stringify(entry.finalPos)}`);
     }
   }
   return false;

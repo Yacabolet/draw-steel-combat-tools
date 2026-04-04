@@ -83,7 +83,11 @@ export function registerDeathTrackerHooks() {
     }
 
     const combatant = game.combat?.combatants.find(c => c.tokenId === token.id);
-    if (combatant) await combatant.update({ hidden: true });
+    if (combatant) {
+      const groupId = combatant._source?.group ?? null;
+      if (groupId) await token.document.setFlag('draw-steel-combat-tools', 'savedGroupId', groupId);
+      await combatant.delete();
+    }
 
     const animDuration = getSetting('deathAnimationDuration');
     if (animDuration > 0) {
@@ -308,13 +312,15 @@ const executeRevival = async (tokenId, explicitTile = null) => {
 
   const actor = tokenDoc.actor;
   if (actor) {
+      const isMinion = String(actor.system?.monster?.organization || '').toLowerCase().trim() === 'minion';
       await actor.toggleStatusEffect('dead', { active: false });
-      
+      if (isMinion) await actor.toggleStatusEffect('dying', { active: false });
+
       const currentStamina = actor.system.stamina?.value || 0;
       if (currentStamina <= 0) {
         await actor.update({ 'system.stamina.value': 1 });
       }
-      
+
       await new Promise(r => setTimeout(r, 250));
 
       if (getSetting('clearEffectsOnRevive')) {
@@ -333,9 +339,20 @@ const executeRevival = async (tokenId, explicitTile = null) => {
   }
 
   await tokenDoc.update({ hidden: false });
-  
-  const combatant = game.combat?.combatants.find(c => c.tokenId === tokenId);
-  if (combatant) await combatant.update({ hidden: false });
+
+  // Restore combatant in active combat, placing them back in their original group if recorded.
+  if (game.combat && !game.combat.combatants.find(c => c.tokenId === tokenId)) {
+    const savedGroupId = tokenDoc.getFlag('draw-steel-combat-tools', 'savedGroupId');
+    const group = savedGroupId ? game.combat.groups.get(savedGroupId) : null;
+    const combatantData = { tokenId, sceneId: canvas.scene.id, actorId: tokenDoc.actorId };
+    if (group) combatantData.group = savedGroupId;
+    await game.combat.createEmbeddedDocuments('Combatant', [combatantData]);
+    if (group) {
+      const minionMaxHP = tokenDoc.actor?.system?.stamina?.max ?? 0;
+      if (minionMaxHP > 0) await group.update({ 'system.staminaValue': group.system.staminaValue + minionMaxHP });
+    }
+    if (savedGroupId) await tokenDoc.unsetFlag('draw-steel-combat-tools', 'savedGroupId');
+  }
 
   if (tile) await tile.document.delete();
   ui.notifications.info(`${tokenDoc.name} has been revived!`);
